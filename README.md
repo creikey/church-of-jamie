@@ -26,7 +26,7 @@ npm run dev
 - API: http://localhost:8788/api
 
 Notes
-- Vite runs on an ephemeral port and is proxied by Wrangler to 8788.
+- Vite runs on port 5173 (strict) and is proxied by Wrangler to 8788.
 - The Worker types reuse shared interfaces in `shared/`.
 
 ## Project Layout
@@ -61,7 +61,7 @@ npm run build
 ```bash
 npx wrangler pages deploy dist --project-name church-of-jamie
 ```
-- Deploys static assets in `dist/` and uses `functions/` automatically.
+- This deploys the static site from `dist/` and also deploys Pages Functions from `functions/` automatically to the same domain. No extra step is needed for the API.
 
 ## GitHub Actions: Manual Deploy Workflow
 A workflow is provided at `.github/workflows/deploy.yml` that builds and deploys both the static site and functions.

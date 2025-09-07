@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "run-p -l dev:*",
-    "dev:vite": "vite --port 5173",
+    "dev:vite": "vite --port 5173 --strictPort",
     "dev:api": "npx -y wrangler pages dev --port=8788 --proxy 5173 dist",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

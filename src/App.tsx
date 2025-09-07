@@ -25,7 +25,6 @@ function App() {
 
   return (
     <div>
-      <img src={jamie} alt="Jamie" />
       {message && <p>{message}</p>}
       <button onClick={onClickFetch}>
         {clicked ? 'Fetched again' : 'Fetch from /api'}
