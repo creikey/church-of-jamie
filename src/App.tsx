@@ -1,4 +1,3 @@
-import jamie from './assets/jamie.png'
 import { useEffect, useState } from 'react'
 import type { HelloResponse } from '../shared/api'
 
