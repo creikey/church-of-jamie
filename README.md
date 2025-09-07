@@ -70,6 +70,29 @@ A workflow is provided at `.github/workflows/deploy.yml` that builds and deploys
 - `CLOUDFLARE_API_TOKEN` – API token with Pages:Edit (or Pages:Write) permission
 - `CLOUDFLARE_ACCOUNT_ID` – Your Cloudflare Account ID
 
+### Create the API token (minimal permissions)
+1. Dashboard → profile menu (top right) → My Profile → API Tokens → Create Token → Create Custom Token.
+2. Name it e.g. "Church of Jamie deploy".
+3. Permissions:
+   - Account → Cloudflare Pages: Edit
+   - (No other permissions are needed for Pages deploys.)
+4. Account resources: select your Cloudflare account.
+5. Create token. Copy it and save in the GitHub repo as secret `CLOUDFLARE_API_TOKEN`.
+
+### Find your Cloudflare Account ID
+You can use CLI or the Dashboard:
+
+- CLI:
+  ```bash
+  npx wrangler whoami
+  ```
+  After login, it prints your Account ID; use that for `CLOUDFLARE_ACCOUNT_ID`.
+
+- Dashboard:
+  1) Open `https://dash.cloudflare.com/` and select your account.
+  2) Go to Workers & Pages → Overview. In Account details, click "Copy account ID".
+  (Alternatively, from Accounts list, use the ⋯ menu → Copy account ID.)
+
 ## Scripts
 - `npm run dev` – Start Vite and Wrangler together (single origin at 8788)
 - `npm run build` – Type-check and build static assets to `dist/`
