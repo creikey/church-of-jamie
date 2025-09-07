@@ -70,23 +70,9 @@ A workflow is provided at `.github/workflows/deploy.yml` that builds and deploys
 - `CLOUDFLARE_API_TOKEN` – API token with Pages:Edit (or Pages:Write) permission
 - `CLOUDFLARE_ACCOUNT_ID` – Your Cloudflare Account ID
 
-### Trigger a Deploy
-- In GitHub → Actions → "Deploy to Cloudflare Pages (manual)" → Run workflow
-- Choose `production` or `preview`
-
-## Updating Wrangler flags and avoiding deprecations
-- Dev command uses: `wrangler pages dev --port=8788 --proxy 5173 dist`
-  - No deprecated `--persist` flag
-  - No inline `--compatibility-date`; it’s sourced from `wrangler.toml`
-- Wrangler is invoked via `npx` in scripts to avoid pulling its transitive deprecated packages into the local install tree.
-- `package.json` contains an `overrides` entry to keep `magic-string` modern, preventing `sourcemap-codec` from being installed.
-
 ## Scripts
 - `npm run dev` – Start Vite and Wrangler together (single origin at 8788)
 - `npm run build` – Type-check and build static assets to `dist/`
 - `npm run preview` – Preview built site with Vite
 - `npm run lint` – ESLint
 - `npm run cf:login` – `wrangler login`
-
-## API Demo Button
-The app includes a button that calls `/api` and displays the typed response using the shared `HelloResponse` interface from `shared/api.ts`.
