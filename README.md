@@ -1,69 +1,92 @@
-# React + TypeScript + Vite
+# Church of Jamie
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Welcome to the church of Jamie
 
-Currently, two official plugins are available:
+# Technical details
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+React + Vite app deployed on Cloudflare Pages with Pages Functions at `/api` on the same domain. Local dev runs a single origin where `/` is the live-reload site and `/api` is served by the Worker.
 
-## Expanding the ESLint configuration
+## Prerequisites
+- Node.js 20+ (22 recommended)
+- Cloudflare account with Pages access
+- GitHub repository (for CI optional)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Install
+```bash
+npm i
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Local Development
+Runs Vite and Cloudflare Pages Functions together on one origin.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+- App: http://localhost:8788/
+- API: http://localhost:8788/api
+
+Notes
+- Vite runs on an ephemeral port and is proxied by Wrangler to 8788.
+- The Worker types reuse shared interfaces in `shared/`.
+
+## Project Layout
+- `src/` – React app
+- `functions/` – Cloudflare Pages Functions
+  - `functions/api/index.ts` → GET `/api`
+- `shared/` – Shared TypeScript types used by both client and worker
+- `wrangler.toml` – Wrangler configuration for Pages
+
+## How to deploy to production
+1) Login
+```bash
+npx wrangler login
+```
+
+2) Create Cloudflare Pages project (choose the name you want)
+```bash
+npx wrangler pages project create church-of-jamie --production-branch main
+```
+- You can list projects to confirm:
+```bash
+npx wrangler pages project list
+```
+
+## Build
+```bash
+npm run build
+```
+- Output goes to `dist/`
+
+## Manual Publish from CLI (optional)
+```bash
+npx wrangler pages deploy dist --project-name church-of-jamie
+```
+- Deploys static assets in `dist/` and uses `functions/` automatically.
+
+## GitHub Actions: Manual Deploy Workflow
+A workflow is provided at `.github/workflows/deploy.yml` that builds and deploys both the static site and functions.
+
+### Configure GitHub Secrets
+- `CLOUDFLARE_API_TOKEN` – API token with Pages:Edit (or Pages:Write) permission
+- `CLOUDFLARE_ACCOUNT_ID` – Your Cloudflare Account ID
+
+### Trigger a Deploy
+- In GitHub → Actions → "Deploy to Cloudflare Pages (manual)" → Run workflow
+- Choose `production` or `preview`
+
+## Updating Wrangler flags and avoiding deprecations
+- Dev command uses: `wrangler pages dev --port=8788 --proxy 5173 dist`
+  - No deprecated `--persist` flag
+  - No inline `--compatibility-date`; it’s sourced from `wrangler.toml`
+- Wrangler is invoked via `npx` in scripts to avoid pulling its transitive deprecated packages into the local install tree.
+- `package.json` contains an `overrides` entry to keep `magic-string` modern, preventing `sourcemap-codec` from being installed.
+
+## Scripts
+- `npm run dev` – Start Vite and Wrangler together (single origin at 8788)
+- `npm run build` – Type-check and build static assets to `dist/`
+- `npm run preview` – Preview built site with Vite
+- `npm run lint` – ESLint
+- `npm run cf:login` – `wrangler login`
+
+## API Demo Button
+The app includes a button that calls `/api` and displays the typed response using the shared `HelloResponse` interface from `shared/api.ts`.

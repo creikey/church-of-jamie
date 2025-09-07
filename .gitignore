@@ -1,3 +1,8 @@
+# Cloudflare Workers
+.wrangler/
+.dev.vars
+.env
+
 # Logs
 logs
 *.log
