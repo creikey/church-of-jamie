@@ -1,0 +1,56 @@
+# Copy to .dev.vars (gitignored) for local development, and set the same values
+# as production secrets with `npx wrangler pages secret put <NAME>`.
+
+# ---------------------------------------------------------------- answering questions
+# Only the key for the active provider is required — see MODEL in functions/api/ask.ts.
+
+# https://openrouter.ai/settings/keys — used when MODEL is an OpenRouter model (the default)
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# https://console.anthropic.com/settings/keys — used when MODEL is a Claude model
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Cloudflare dashboard → Workers & Pages → the account ID in the right sidebar
+CLOUDFLARE_ACCOUNT_ID=
+
+# Cloudflare dashboard → My Profile → API Tokens → Create Token → Custom token,
+# with the single permission: Account · Workers AI · Read
+CLOUDFLARE_AI_TOKEN=
+
+# ---------------------------------------------------------------- email (Cloudflare Email Service)
+# Uses CLOUDFLARE_ACCOUNT_ID from above as well. Requires the Workers Paid plan and a domain
+# onboarded under dashboard → Compute → Email Service → Email Sending. See PRODUCTION_SETUP.md.
+
+# A second API token, separate from the Workers AI one: Account · Email Sending · Edit
+CLOUDFLARE_EMAIL_TOKEN=
+
+# Who mail comes from. Must be an address on the onboarded domain. The display name is optional —
+# a bare jamie@yourdomain.com works too.
+EMAIL_FROM=Church of Jamie <jamie@yourdomain.com>
+
+# ---------------------------------------------------------------- payments (Stripe)
+
+# https://dashboard.stripe.com/test/apikeys — the Secret key. Use the test key (sk_test_...)
+# locally and the live key (sk_live_...) in production.
+STRIPE_SECRET_KEY=sk_test_...
+
+# The signing secret for the webhook endpoint that points at /api/stripe-webhook.
+# Locally: printed by `stripe listen --forward-to localhost:8788/api/stripe-webhook`.
+# In production: https://dashboard.stripe.com/webhooks → your endpoint → Signing secret.
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# ---------------------------------------------------------------- bot challenge (Turnstile)
+
+# https://dash.cloudflare.com → Turnstile → Add widget. Both keys, or neither: with either one
+# missing the challenge is not shown and not checked, which in production means anyone can make
+# this site mail a six-digit code to any address they like, as fast as the rate limits allow.
+#
+# Cloudflare's always-passes test pair, for local development:
+#   TURNSTILE_SITE_KEY=1x00000000000000000000AA
+#   TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+# Swap the site key to 2x00000000000000000000AB to see the failure path.
+#
+# The site key is public — it is served to the browser by /api/me — so it is only kept here to
+# keep all the configuration in one file.
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=

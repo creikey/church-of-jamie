@@ -34,4 +34,5 @@ jobs:
           projectName: church-of-jamie
           directory: ./dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          wranglerVersion: '4'
           branch: main

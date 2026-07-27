@@ -4,15 +4,20 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "run-p -l dev:*",
+    "dev": "npm run build && run-p -l dev:*",
     "dev:vite": "vite --port 5173 --strictPort",
     "dev:api": "npx -y wrangler pages dev --port=8788 --proxy 5173 dist",
     "build": "tsc -b && vite build",
+    "convert": "node --experimental-strip-types tools/convert.ts",
+    "embed": "node --experimental-strip-types tools/embed.ts",
+    "db:local": "npx -y wrangler d1 execute church-of-jamie --local --file=./schema.sql",
+    "db:remote": "npx -y wrangler d1 execute church-of-jamie --remote --file=./schema.sql",
     "lint": "eslint .",
     "preview": "vite preview",
     "cf:login": "npx -y wrangler login"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -20,6 +25,7 @@
     "@cloudflare/workers-types": "^4.20241112.0",
     "@eslint/js": "^9.33.0",
     "@tailwindcss/vite": "^4.1.13",
+    "@types/node": "^26.1.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",

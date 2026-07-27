@@ -1,4 +1,15 @@
 name = "church-of-jamie"
 compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 pages_build_output_dir = "dist"
+
+# Accounts, sessions and the payment ledger. See `schema.sql`.
+#
+# `database_id` below must be the id printed by `npx wrangler d1 create church-of-jamie`.
+# Local development ignores it and uses a sqlite file under `.wrangler/`, so `npm run dev` works
+# before the remote database exists — but a deploy with the placeholder still there will fail.
+[[d1_databases]]
+binding = "DB"
+database_name = "church-of-jamie"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
