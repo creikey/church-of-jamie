@@ -17,6 +17,9 @@ dist
 dist-ssr
 *.local
 
+# Output of `npm run convert` — the corpus itself is not checked in
+converted.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
