@@ -55,12 +55,13 @@ interface ModelChoice {
 
 const MODELS: Record<string, ModelChoice> = {
 	inkling: { provider: 'openrouter', id: 'thinkingmachines/inkling' },
+	kimi: { provider: 'openrouter', id: 'moonshotai/kimi-k2.6' },
 	opus: { provider: 'anthropic', id: 'claude-opus-5' },
 	sonnet: { provider: 'anthropic', id: 'claude-sonnet-5' },
 };
 
 /** Which model answers. Flip this one line to switch. */
-const MODEL = MODELS.inkling;
+const MODEL = MODELS.kimi;
 
 /** Env var holding the key for the active provider — checked before any work is done. */
 const API_KEY: keyof Env = MODEL.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENROUTER_API_KEY';
