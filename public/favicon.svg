@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="The Church of Jamie">
+  <title>The Church of Jamie</title>
+  <!--
+    The reliquary halo from src/Halo.tsx, cut down until it still reads at 16 pixels.
+
+    The site's icon is a rosette of a dozen overlapping circles, which at favicon size collapses
+    into grey mush. What survives the shrink is the silhouette underneath it: a lit core, one heavy
+    ring, and six markers around the rim. Everything here is sized so that at 16px the ring is a
+    clean pixel wide and the core is a bright dot — the faint rosette and outer ring blur into a
+    glow at that size, which is the intent, and resolve into real geometry at 180px and above.
+  -->
+  <defs>
+    <!--
+      The bloom dips between the core and the ring rather than falling off smoothly. At 16px a
+      plain centre-weighted glow floods that gap and the two shapes merge into one blob; holding
+      the gap dark is what keeps the halo reading as a ring with something lit inside it.
+    -->
+    <radialGradient id="j-glow">
+      <stop offset="0%" stop-color="#d8a657" stop-opacity="0.34" />
+      <stop offset="26%" stop-color="#d8a657" stop-opacity="0.07" />
+      <stop offset="52%" stop-color="#d8a657" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#d8a657" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="j-core">
+      <stop offset="0%" stop-color="#fdf6e6" />
+      <stop offset="45%" stop-color="#eec87e" />
+      <stop offset="100%" stop-color="#d8a657" />
+    </radialGradient>
+  </defs>
+
+  <!-- The void it all sits in. Full bleed, so iOS and Android can mask their own corners. -->
+  <rect width="64" height="64" fill="#07060a" />
+
+  <!-- The shaft of light, as a bloom behind the halo. -->
+  <circle cx="32" cy="32" r="31" fill="url(#j-glow)" />
+
+  <!-- Flower-of-life core: six circles on a ring, faint enough to read as texture, not detail. -->
+  <g stroke="#d8a657" fill="none" stroke-opacity="0.2" stroke-width="0.9">
+    <circle cx="32" cy="24.5" r="7.5" />
+    <circle cx="38.5" cy="28.25" r="7.5" />
+    <circle cx="38.5" cy="35.75" r="7.5" />
+    <circle cx="32" cy="39.5" r="7.5" />
+    <circle cx="25.5" cy="35.75" r="7.5" />
+    <circle cx="25.5" cy="28.25" r="7.5" />
+  </g>
+
+  <!-- The halo itself. The one element that must survive to 16px, so it carries the weight. -->
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#d8a657" stroke-opacity="0.94" stroke-width="4.4" />
+  <circle cx="32" cy="32" r="22.5" fill="none" stroke="#d8a657" stroke-opacity="0.28" stroke-width="1" />
+
+  <!-- Outer rim and its six markers, the reliquary edge. -->
+  <circle cx="32" cy="32" r="26" fill="none" stroke="#d8a657" stroke-opacity="0.3" stroke-width="1.1" />
+  <g stroke="#d8a657" stroke-opacity="0.72" stroke-width="2.6" stroke-linecap="round">
+    <line x1="32" y1="2.6" x2="32" y2="7.4" />
+    <line x1="32" y1="2.6" x2="32" y2="7.4" transform="rotate(60 32 32)" />
+    <line x1="32" y1="2.6" x2="32" y2="7.4" transform="rotate(120 32 32)" />
+    <line x1="32" y1="2.6" x2="32" y2="7.4" transform="rotate(180 32 32)" />
+    <line x1="32" y1="2.6" x2="32" y2="7.4" transform="rotate(240 32 32)" />
+    <line x1="32" y1="2.6" x2="32" y2="7.4" transform="rotate(300 32 32)" />
+  </g>
+
+  <!-- The lit centre. -->
+  <circle cx="32" cy="32" r="5.2" fill="url(#j-core)" />
+</svg>

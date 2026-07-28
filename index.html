@@ -2,12 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- SVG first for anything that understands it; the rest are the fallback ladder. Safari
+         still ignores SVG favicons, which is why the PNGs and the .ico are all still here. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Mobile browser chrome, so the surround matches the page instead of flashing white. -->
+    <meta name="theme-color" content="#07060a" />
+    <meta name="description" content="Ask Jamie a question about self-realization." />
     <title>Church of Jamie</title>
   </head>
   <body>
