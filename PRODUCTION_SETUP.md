@@ -244,6 +244,26 @@ the constants in `server/env.ts`.
 **✅ Check** — your key starts with `sk_test_`, not `pk_` (that is the publishable key, which this
 app does not use) and not `sk_live_`.
 
+### A word on Managed Payments
+
+Stripe turns **Managed Payments** on by default for new accounts, and this integration is written
+for it. Stripe becomes the merchant of record: it registers for and remits VAT and sales tax in
+75+ countries, fights disputes, and issues the invoice and its own confirmation email. That costs
+[3.5% on top of standard processing](https://support.stripe.com/questions/managed-payments-pricing)
+— a $5 sale pays 6.4% + 30¢ instead of 2.9% + 30¢, so you net $4.38 rather than $4.56.
+
+Against roughly $4.00 of model cost per 100 messages, that is the difference between about 38¢ and
+56¢ of margin. Worth knowing before you decide $5 is the price; see *Running costs* in the README.
+
+**Nothing to do here** — it is already on and the code already matches it. If you would rather
+have the 18¢ and handle tax registration yourself, turn it off under **Settings → Payments**, then
+add `'invoice_creation[enabled]': 'true'` back to `createCheckoutSession` in `server/stripe.ts`.
+Leaving that parameter in while Managed Payments is on is rejected with *"Unsupported parameter:
+invoice_creation"* at the moment someone clicks Buy.
+
+Buyers get two emails: Stripe's confirmation and ours. Turn Stripe's off under **Settings →
+Customer emails** if one is enough.
+
 ## 11. Install the Stripe CLI
 
 Needed to test payments locally, because the balance only moves when Stripe calls back.
@@ -524,6 +544,7 @@ from these on every purchase.
 | `/api/me` shows `"turnstileSiteKey":null` | one of the two keys is unset in production | step 17 |
 | Paid, but the counter never moves | no webhook, wrong URL, or wrong signing secret | step 18; check the attempt log on Stripe's webhook page |
 | Webhook attempts show `400 Stripe signature does not match` | test secret on a live endpoint, or vice versa | step 21 |
+| `Unsupported parameter: invoice_creation` when clicking Buy | Managed Payments is on and `invoice_creation` was added back | remove it from `createCheckoutSession`, or turn Managed Payments off — step 10 |
 | `D1_ERROR: no such table: users` | schema not applied to the remote database | `npm run db:remote` |
 | `Cannot read properties of undefined (reading 'prepare')` | the `DB` binding is missing | step 17's second ✅ Check |
 | `Corpus asset /corpus/meta.json is not being served` | corpus not built, or not in `dist/` | step 14, then `npm run build` |

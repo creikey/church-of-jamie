@@ -12,4 +12,4 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "church-of-jamie"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "6cdf063a-8d61-4851-85f7-57ce19726a09"

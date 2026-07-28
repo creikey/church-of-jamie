@@ -53,6 +53,21 @@ export const MESSAGES_PER_PURCHASE = 100;
 /** Price of one purchase, in cents. */
 export const PURCHASE_PRICE_CENTS = 500;
 
+/**
+ * What tax authorities think is being sold, in Stripe's classification.
+ *
+ * `txcd_10105001` is "Artificial Intelligence as a Service — Cloud Based — Personal Use", which
+ * Stripe defines as access to AI tools such as chatbots, hosted entirely on the provider's servers
+ * and reached through a browser, bought for personal rather than business use. That is this
+ * product, said back exactly.
+ *
+ * Managed Payments will not open a Checkout Session without one, because Stripe is the merchant of
+ * record and this is what it computes VAT and sales tax from. Changing what is sold here means
+ * changing this too — the full list is at https://docs.stripe.com/tax/tax-codes, and picking the
+ * right one is a tax question rather than a programming one.
+ */
+export const PRODUCT_TAX_CODE = 'txcd_10105001';
+
 const HOUR = 60 * 60;
 const DAY = 24 * HOUR;
 

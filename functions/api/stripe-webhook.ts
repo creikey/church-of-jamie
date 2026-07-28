@@ -123,16 +123,24 @@ async function sendReceipt(
 	const to = account?.email ?? details.fallbackEmail;
 	if (!to) return;
 
+	// Under Managed Payments the invoice is Stripe's to create, so it may be absent from the
+	// session, arrive later than this callback, or not be readable with this key at all. None of
+	// that is a reason to withhold a receipt for money that has already changed hands — the
+	// invoice number and link are decoration on it, so they are best-effort and nothing more.
 	let invoiceNumber: string | null = null;
 	let invoiceUrl: string | null = null;
 	if (details.invoiceId) {
-		const invoice = await fetchInvoice(env, details.invoiceId);
-		invoiceNumber = invoice.number;
-		invoiceUrl = invoice.hosted_invoice_url ?? invoice.invoice_pdf;
-		if (invoiceNumber) {
-			await env.DB.prepare('UPDATE purchases SET invoice_number = ? WHERE stripe_event_id = ?')
-				.bind(invoiceNumber, details.eventId)
-				.run();
+		try {
+			const invoice = await fetchInvoice(env, details.invoiceId);
+			invoiceNumber = invoice.number;
+			invoiceUrl = invoice.hosted_invoice_url ?? invoice.invoice_pdf;
+			if (invoiceNumber) {
+				await env.DB.prepare('UPDATE purchases SET invoice_number = ? WHERE stripe_event_id = ?')
+					.bind(invoiceNumber, details.eventId)
+					.run();
+			}
+		} catch (error: unknown) {
+			console.error('Could not read the invoice; sending the receipt without it', error);
 		}
 	}
 

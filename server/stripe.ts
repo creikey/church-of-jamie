@@ -8,6 +8,7 @@
  */
 
 import type { Env } from './env';
+import { PRODUCT_TAX_CODE } from './env';
 import { timingSafeEqual } from './http';
 
 /**
@@ -51,8 +52,18 @@ export interface CheckoutSession {
  * nothing to create by hand in Stripe before the first sale — changing what $5 buys is a change
  * to `server/env.ts` and nothing else.
  *
- * `invoice_creation` is what makes Stripe produce a real numbered invoice with a downloadable PDF
- * for every payment, which the receipt email then links to.
+ * There is deliberately no `invoice_creation` here. This account runs Stripe Managed Payments,
+ * where Stripe is the merchant of record and owns everything after the sale — the invoice, the
+ * tax on it, and its own confirmation email. Sending `invoice_creation` alongside it is rejected
+ * outright ("Unsupported parameter"), because it would be asking to do a job Stripe has taken.
+ *
+ * An invoice is still produced; it is just Stripe's to make. The webhook reads it back off the
+ * session when it is there, and the receipt email links to it — see `sendReceipt`, which treats a
+ * missing one as normal rather than as a failure.
+ *
+ * If Managed Payments is ever turned off (dashboard → Settings → Payments, or
+ * `managed_payments[enabled]: 'false'` on this call), add `'invoice_creation[enabled]': 'true'`
+ * back and the invoice becomes ours to create again.
  */
 export async function createCheckoutSession(
 	env: Env,
@@ -73,12 +84,12 @@ export async function createCheckoutSession(
 		'line_items[0][price_data][product_data][name]': `${options.messages} messages`,
 		'line_items[0][price_data][product_data][description]':
 			`${options.messages} questions answered by Jamie at the Church of Jamie.`,
+		'line_items[0][price_data][product_data][tax_code]': PRODUCT_TAX_CODE,
 		customer_email: options.email,
 		// Both are read back in the webhook; `client_reference_id` also shows in the dashboard.
 		client_reference_id: options.userId,
 		'metadata[user_id]': options.userId,
 		'metadata[messages]': String(options.messages),
-		'invoice_creation[enabled]': 'true',
 		success_url: options.successUrl,
 		cancel_url: options.cancelUrl,
 	});

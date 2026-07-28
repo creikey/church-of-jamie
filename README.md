@@ -148,7 +148,7 @@ npx wrangler whoami    # prints your account ID
 ### Cloudflare Email Sending — this is what sends the sign-in codes and receipts
 
 Both emails are plain text: the six digits someone types in to sign in, and the receipt after a
-purchase, which links to the Stripe invoice PDF.
+purchase, which links to the Stripe invoice when there is one.
 
 Sending goes through **Cloudflare Email Service**, over its REST API rather than the `send_email`
 Worker binding. Two reasons, and both are hard blockers rather than preferences: Pages Functions
@@ -439,8 +439,6 @@ counter in the header settles immediately rather than after the model finishes.
 
 `POST /api/checkout` opens a Stripe Checkout Session carrying the account id in
 `client_reference_id` and `metadata.user_id`, and returns its URL for the browser to follow.
-`invoice_creation` is on, so Stripe produces a real numbered invoice with a downloadable PDF for
-every payment.
 
 Nothing is granted there. Coming back to `success_url` proves nothing, so the site simply polls
 `/api/me` until the number goes up. The grant happens in `/api/stripe-webhook`, which:
@@ -449,10 +447,32 @@ Nothing is granted there. Coming back to `success_url` proves nothing, so the si
    more than five minutes ago, so a captured callback cannot be replayed;
 2. inserts the event id into `purchases` — losing that insert means this is a redelivery, and it
    stops there;
-3. adds the messages, then reads the invoice back and mails a plain-text receipt linking to it.
+3. adds the messages, then mails a plain-text receipt, linking to the invoice when there is one.
 
 A receipt that fails to send is logged and swallowed. The messages are already on the account, and
-asking Stripe to retry would only re-run a grant that has happened.
+asking Stripe to retry would only re-run a grant that has happened. The invoice lookup is
+best-effort for the same reason: money has changed hands, so a receipt goes out whether or not the
+invoice can be read.
+
+### Managed Payments
+
+Stripe enables **Managed Payments** on new accounts by default, and this integration assumes it.
+Under it Stripe is the merchant of record — it registers for and remits VAT and sales tax in 75+
+countries, fights disputes, and owns everything after the sale, including the invoice and its own
+confirmation email. It costs
+[3.5% on top of standard processing](https://support.stripe.com/questions/managed-payments-pricing),
+so a $5 sale pays 6.4% + 30¢ rather than 2.9% + 30¢ — about 18¢ more.
+
+That is why `createCheckoutSession` sends no `invoice_creation`: with Managed Payments on, Stripe
+rejects it outright, because it is asking to do a job Stripe has taken. Invoices still exist; they
+are just Stripe's to make.
+
+To go the other way — keep the 18¢, take on the tax registration yourself — turn Managed Payments
+off under **Settings → Payments** in the dashboard (or pass `managed_payments[enabled]: 'false'` on
+that call) and add `'invoice_creation[enabled]': 'true'` back in `server/stripe.ts`.
+
+Buyers get two emails either way: Stripe's confirmation and ours. Stripe's can be turned off under
+**Settings → Customer emails**.
 
 Refunds are not wired up: refunding in the Stripe dashboard returns the money and leaves the
 messages on the account.
@@ -553,9 +573,18 @@ effectively free at this volume. Cloudflare's free plan caps Pages Functions CPU
 request after a cold start can exceed; the $5 Workers Paid plan removes that limit — and is
 required anyway, since Email Sending only runs on it.
 
-So $5 for 100 messages is roughly **$4 of model cost** at the Inkling price, before Stripe's cut
-(2.9% + 30¢, about 36¢ on a $5 sale). It is close to break-even, and it is underwater on Claude
-Opus. The margin lives in `PURCHASE_PRICE_CENTS` and `MESSAGES_PER_PURCHASE` in `server/env.ts`.
+So $5 for 100 messages is roughly **$4 of model cost** at the Inkling price. What is left after
+Stripe depends on whether Managed Payments is on:
+
+| | Stripe takes | You net | Margin over $4 of model cost |
+|---|---|---|---|
+| Managed Payments on (the default, and what this is built for) | 6.4% + 30¢ | $4.38 | **38¢** |
+| Managed Payments off | 2.9% + 30¢ | $4.56 | **56¢** |
+
+Either way it is close to break-even, and it is underwater on Claude Opus — one Opus answer costs
+more than a hundredth of the pack. The three numbers that fix that are `PURCHASE_PRICE_CENTS`,
+`MESSAGES_PER_PURCHASE` and `FREE_MESSAGES` in `server/env.ts`; raising the price or cutting the
+free allowance moves the margin far more than the 18¢ Managed Payments costs.
 
 D1 and email are effectively free at this scale: D1's free tier covers 5M row reads a day, and the
 Workers Paid plan includes 3,000 emails a month (then $0.35 per 1,000) — at roughly two emails per
