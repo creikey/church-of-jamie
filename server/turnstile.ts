@@ -1,15 +1,13 @@
 /**
- * Cloudflare Turnstile — the challenge in front of the one endpoint that sends mail to an address
- * nobody has proved they own.
+ * Cloudflare Turnstile — the only thing standing between a script and the model bill.
  *
- * Without it, `/api/auth/request-code` is a mail cannon: a script walks a list of addresses and
- * this site sends each of them a message. The per-address cooldown does nothing against that,
- * because every request uses a different address. The rate limits bound how fast it can happen;
- * Turnstile is what stops it being automated at all.
+ * A passed challenge is what buys messages here; there is nothing else to prove and nobody to be.
+ * The per-IP limits in `env.ts` bound how many grants one connection can claim, but they are a
+ * ceiling, not a gate. Turnstile is what makes claiming one cost something in the first place.
  *
  * It is optional so that local development works with nothing configured, and `/api/me` reports
- * whether it is on so the sign-in panel knows whether to draw a widget. Leaving it off in
- * production is a real hole — see the README.
+ * whether it is on so the panel knows whether to draw a widget. Leaving it off in production
+ * means anyone can help themselves to messages in a loop — see the README.
  */
 
 import type { Env } from './env';

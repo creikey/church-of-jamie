@@ -67,23 +67,3 @@ export function randomHex(bytes: number): string {
 	crypto.getRandomValues(buffer);
 	return [...buffer].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-
-/** Length-independent comparison, so a mismatch reveals nothing about where it happened. */
-export function timingSafeEqual(a: string, b: string): boolean {
-	if (a.length !== b.length) return false;
-	let difference = 0;
-	for (let i = 0; i < a.length; i++) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
-	return difference === 0;
-}
-
-/**
- * Deliberately permissive: the address only has to be good enough to hand to the mail provider,
- * and the code that arrives in the inbox is what actually proves ownership.
- */
-export function normalizeEmail(raw: unknown): string | null {
-	if (typeof raw !== 'string') return null;
-	const email = raw.trim().toLowerCase();
-	if (email.length < 3 || email.length > 254) return null;
-	if (!/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) return null;
-	return email;
-}

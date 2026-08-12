@@ -1,8 +1,8 @@
 /**
  * POST /api/ask — answer a question as Jamie.
  *
- * 0. Require a signed-in account with a message left in today's allowance, and count that message
- *    before any work is done. Nobody asks anything here anonymously.
+ * 0. Require a browser holding a grant with a message left on it, and count that message before
+ *    any work is done. The grant comes from `/api/challenge` and nowhere else.
  * 1. Embed the question with the same Workers AI model that built the corpus.
  * 2. Cosine-rank every exchange, collapse runs of consecutive Jamie messages into one answer,
  *    and take the ten closest.
@@ -15,9 +15,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { PagesFunction } from '@cloudflare/workers-types';
 import type { AskRequest, ChatMessage } from '../../shared/api';
-import { currentUser, refundMessage, spendMessage } from '../../server/accounts';
 import type { Env } from '../../server/env';
-import { DAILY_MESSAGES } from '../../server/env';
+import { MESSAGES_PER_CHALLENGE } from '../../server/env';
+import { currentGrant, refundMessage, spendMessage } from '../../server/grants';
 import { crossOrigin } from '../../server/http';
 
 interface CorpusMeta {
@@ -371,8 +371,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 		return json({ error: `${API_KEY} is not set on this deployment.` }, 500);
 	}
 
-	const user = await currentUser(env, request as unknown as Request);
-	if (!user) return json({ error: 'Sign in to ask Jamie anything.' }, 401);
+	const grant = await currentGrant(env, request as unknown as Request);
+	if (!grant) return json({ error: 'Pass the challenge to ask Jamie anything.' }, 401);
 
 	let body: AskRequest;
 	try {
@@ -384,21 +384,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 	const question = (body.question ?? '').trim().slice(0, MAX_QUESTION_CHARS);
 	if (!question) return json({ error: 'Ask something first.' }, 400);
 
-	// Count it first. Reading the count and then incrementing would let two questions sent at once
-	// both see the day's last message and both spend it. The allowance is keyed on the address,
-	// not the session, so opening a second browser does not open a second allowance.
-	const spent = await spendMessage(env, user.email);
+	// Count it first. Reading the number and then decrementing would let two questions sent at
+	// once both see the grant's last message and both spend it.
+	const spent = await spendMessage(env, grant);
 	if (!spent.ok) {
 		return json(
 			{
-				error: `That is all ${DAILY_MESSAGES} messages for today. Another ${DAILY_MESSAGES} arrive tomorrow.`,
+				error: `That is all ${MESSAGES_PER_CHALLENGE} messages. Pass the challenge again for ${MESSAGES_PER_CHALLENGE} more.`,
 				outOfMessages: true,
 			},
 			429,
-			{ 'retry-after': String(spent.retryAfter) },
 		);
 	}
-	const remainingToday = spent.remaining;
+	const remaining = spent.remaining;
 
 	let store: Corpus;
 	let turn: string;
@@ -407,7 +405,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 		const query = await embedQuestion(question, store.meta.model, env);
 		turn = buildQuestionTurn(question, retrieve(store, query, RETRIEVED_EXCHANGES));
 	} catch (error: unknown) {
-		await refundMessage(env, user.email);
+		await refundMessage(env, grant);
 		return json({ error: error instanceof Error ? error.message : 'Retrieval failed.' }, 500);
 	}
 
@@ -436,7 +434,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
 			// Sent before the answer so the counter in the header settles immediately, rather than
 			// after however long the model takes.
-			controller.enqueue(sse({ type: 'balance', remainingToday }));
+			controller.enqueue(sse({ type: 'balance', remaining }));
 
 			const emit = (text: string) => {
 				emitted = true;
@@ -489,8 +487,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 				// Nothing was said, so nothing was spent. A stream that broke part-way through still
 				// gave an answer, and that one stays counted.
 				if (!emitted) {
-					await refundMessage(env, user.email);
-					controller.enqueue(sse({ type: 'balance', remainingToday: remainingToday + 1 }));
+					await refundMessage(env, grant);
+					controller.enqueue(sse({ type: 'balance', remaining: remaining + 1 }));
 				}
 				controller.enqueue(
 					sse({

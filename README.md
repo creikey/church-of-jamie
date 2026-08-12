@@ -5,9 +5,9 @@ Welcome to the church of Jamie.
 Ask a question about self-realization and get an answer written as Jamie, grounded in his own
 writing and in how he actually answered similar questions in the Discord.
 
-Asking requires an account. Signing in with an email address gives that address **50 messages a
-day**, free, and the count starts over every day at midnight UTC. An account holds an email
-address and nothing else.
+Asking is free and there is nothing to sign in to. Passing a "prove you are human" checkbox is
+worth **10 messages**; when those are spent, pass another one for 10 more. There is no account and
+no address — nothing is stored about anybody.
 
 # Technical details
 
@@ -18,9 +18,8 @@ Local dev runs a single origin where `/` is the live-reload site and `/api` is s
 - Node.js 20+ (22 recommended)
 - Cloudflare account with Pages access
 - OpenRouter account (or an Anthropic one, if you switch `MODEL` back to Claude)
-- Cloudflare **Workers Paid** plan ($5/month) — Email Sending requires it, and it lifts the 10 ms
-  CPU cap that a cold start can exceed
-- A domain on Cloudflare DNS, for sending the sign-in code emails
+- Cloudflare **Workers Paid** plan ($5/month), recommended — it lifts the 10 ms CPU cap that a
+  cold start can exceed
 - GitHub repository (for CI optional)
 
 > **Setting this up for the first time?** [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) is the
@@ -55,18 +54,15 @@ Notes
   in setup. It survives restarts and is independent of production.
 
 ## Project Layout
-- `src/` – React app (the "ask Jamie" page, plus the sign-in and account panels)
+- `src/` – React app (the "ask Jamie" page, plus the challenge panel)
 - `functions/` – Cloudflare Pages Functions, one file per route
   - `functions/api/index.ts` → GET `/api`
   - `functions/api/ask.ts` → POST `/api/ask` — retrieval + the model, streamed back as SSE
-  - `functions/api/me.ts` → GET `/api/me` — the signed-in account, and how many messages a day
-  - `functions/api/auth/request-code.ts` → POST — mail a six-digit sign-in code
-  - `functions/api/auth/verify.ts` → POST — trade the code for a session cookie
-  - `functions/api/auth/logout.ts` → POST — drop the session
-  - `functions/api/account.ts` → DELETE `/api/account` — erase the account
-- `server/` – Worker-side modules the routes share: `accounts.ts` (sessions, codes, the daily
-  allowance), `email.ts`, `turnstile.ts`, `ratelimit.ts`, and `env.ts` (every binding and secret,
-  plus `DAILY_MESSAGES` and the abuse-limit constants)
+  - `functions/api/me.ts` → GET `/api/me` — messages left, and whether a challenge is configured
+  - `functions/api/challenge.ts` → POST `/api/challenge` — a solved challenge, traded for messages
+- `server/` – Worker-side modules the routes share: `grants.ts` (the allowance and the cookie that
+  carries it), `turnstile.ts`, and `env.ts` (every binding and secret, plus
+  `MESSAGES_PER_CHALLENGE`)
 - `shared/` – Shared TypeScript types used by both client and worker
 - `schema.sql` – The D1 tables
 - `tools/` – Offline scripts: `convert.ts` (Discord export → `converted.json`) and `embed.ts`
@@ -90,10 +86,8 @@ secrets for production in step 5.
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | answering questions, only if `MODEL` is a Claude model |
 | `CLOUDFLARE_ACCOUNT_ID` | `npx wrangler whoami` | embeddings |
 | `CLOUDFLARE_AI_TOKEN` | Cloudflare API token, Workers AI · Read | embeddings |
-| `CLOUDFLARE_EMAIL_TOKEN` | API token, Account · Email Sending · Edit | sign-in codes |
-| `EMAIL_FROM` | your verified sending address | sign-in codes |
-| `TURNSTILE_SITE_KEY` | Cloudflare dashboard → Turnstile | keeping the sign-in form off bots |
-| `TURNSTILE_SECRET_KEY` | same widget | keeping the sign-in form off bots |
+| `TURNSTILE_SITE_KEY` | Cloudflare dashboard → Turnstile | the challenge that hands out messages |
+| `TURNSTILE_SECRET_KEY` | same widget | the challenge that hands out messages |
 
 Plus one thing that is **not** a secret: `database_id` in `wrangler.toml`, from step 2.
 
@@ -141,43 +135,11 @@ npx wrangler whoami    # prints your account ID
 
 → `CLOUDFLARE_ACCOUNT_ID=...`
 
-### Cloudflare Email Sending — this is what sends the sign-in codes
+### Turnstile keys — this is what stands between a script and the model bill
 
-There is one email and it is plain text: the six digits someone types in to sign in.
-
-Sending goes through **Cloudflare Email Service**, over its REST API rather than the `send_email`
-Worker binding. Two reasons, and both are hard blockers rather than preferences: Pages Functions
-do not support that binding, and the binding can only reach addresses already verified as Email
-Routing destinations — which is useless for mailing a code to someone who has just typed their
-address in for the first time. A token and a `fetch` reach anybody.
-
-It needs the **Workers Paid** plan and a domain whose DNS is on Cloudflare. In exchange,
-Cloudflare writes the SPF, DKIM, DMARC and bounce-MX records itself, which is the part that is
-fiddly with any outside provider.
-
-1. Dashboard → **Compute** → **Email Service** → **Email Sending** → **Onboard Domain**
-2. Pick your domain, review the records it proposes, **Done**. Live in 5–15 minutes.
-3. Dashboard → **My Profile** → **API Tokens** → **Create Custom Token**, one permission:
-   **Account** · **Email Sending** · **Edit**. (Account, not Zone — there is a similarly named
-   Zone entry that will not work.) → `CLOUDFLARE_EMAIL_TOKEN=...`
-4. `EMAIL_FROM=Church of Jamie <jamie@yourdomain.com>` — must be on the onboarded domain. A bare
-   `jamie@yourdomain.com` works too; the display name is optional. The mailbox does not have to
-   exist, since nothing is delivered to it.
-
-`CLOUDFLARE_ACCOUNT_ID` is reused from above. New accounts start with a conservative daily sending
-quota that rises with healthy use.
-
-[PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) has a `curl` that verifies this end to end before you
-wire it into anything.
-
-Swapping to another provider is one file: `server/email.ts` exposes `sendEmail`, and nothing else
-knows how mail is sent.
-
-### Turnstile keys — this is what keeps the sign-in form off bots
-
-`/api/auth/request-code` sends mail to an address nobody has proved they own, which makes it the
-one endpoint worth attacking. Turnstile is what stops that being automated. **Do not deploy
-without it** — see *Abuse and rate limiting* below for what it is holding back.
+A passed challenge is what buys messages here, and it is the only thing anyone has to do to get
+them. Take it away and `/api/challenge` hands out model time to anything that can send a POST.
+**Do not deploy without it** — see *Abuse* below for what it is holding back.
 
 1. https://dash.cloudflare.com → **Turnstile** → **Add widget**
 2. Name it, add your hostname (and `localhost` if you want the real widget locally)
@@ -194,7 +156,8 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 ```
 
 With either key missing the challenge is not drawn and not checked, so `npm run dev` works with
-nothing configured. `/api/me` reports which state it is in, and the sign-in panel follows.
+nothing configured — the panel shows a plain **Begin** button instead. `/api/me` reports which
+state it is in, and the panel follows.
 
 ## 1b. Choosing the model
 
@@ -219,8 +182,7 @@ OpenRouter's OpenAI-compatible endpoint, `provider: 'anthropic'` uses the Anthro
 
 ## 2. Create the database
 
-Accounts, sessions, sign-in codes and the limit counters live in Cloudflare D1. `schema.sql` has
-the tables.
+The message grants live in Cloudflare D1. `schema.sql` has the one table.
 
 ```bash
 npx wrangler login                        # opens a browser, one time
@@ -249,8 +211,11 @@ database is a sqlite file under `.wrangler/` and has nothing to do with the remo
 To look inside later:
 
 ```bash
-npx wrangler d1 execute church-of-jamie --remote --command "SELECT email, created_at FROM users"
+npx wrangler d1 execute church-of-jamie --remote --command \
+  "SELECT COUNT(*) AS grants, SUM(remaining) AS unspent FROM grants"
 ```
+
+There is nothing else in there to look at — a grant row is a hash, a number and an expiry.
 
 ## 3. Build the corpus
 
@@ -279,19 +244,20 @@ npm run dev
 
 Open http://localhost:8788. The whole path, end to end:
 
-1. Enter your email, click **Send code**. The code arrives by mail; type it in. You are signed in,
-   with 50 of 50 messages left today.
-2. Ask something. The counter drops to 49. The first question is slow (the worker pulls the corpus
+1. The challenge passes itself (with the test keys it always does) and 10 of 10 messages are
+   yours. With no Turnstile keys set, click **Begin** instead.
+2. Ask something. The counter drops to 9. The first question is slow (the worker pulls the corpus
    into memory); after that it is fast for as long as the isolate lives.
-3. **Delete** → **Delete forever** erases the account. Signing up again with the same address does
-   not start the day over — the allowance is counted per address, not per account.
+3. Spend all ten and the composer is replaced by the challenge again. Passing it puts the count
+   back to 10.
 
-To watch the allowance itself, it is one row in D1:
+The allowance is one row in D1:
 
 ```bash
-npx wrangler d1 execute church-of-jamie --local --command \
-  "SELECT bucket, count FROM rate_limits WHERE bucket LIKE 'messages-email-d:%'"
+npx wrangler d1 execute church-of-jamie --local --command "SELECT * FROM grants"
 ```
+
+Clearing the `coj_messages` cookie in devtools is the quickest way back to a first visit.
 
 ## 5. Deploy
 
@@ -307,8 +273,6 @@ Then set the secrets on the deployed project — production does **not** read `.
 npx wrangler pages secret put OPENROUTER_API_KEY --project-name church-of-jamie
 npx wrangler pages secret put CLOUDFLARE_ACCOUNT_ID --project-name church-of-jamie
 npx wrangler pages secret put CLOUDFLARE_AI_TOKEN --project-name church-of-jamie
-npx wrangler pages secret put CLOUDFLARE_EMAIL_TOKEN --project-name church-of-jamie
-npx wrangler pages secret put EMAIL_FROM --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SITE_KEY --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SECRET_KEY --project-name church-of-jamie
 ```
@@ -328,149 +292,136 @@ separate step for the API.
 ### Once it is live
 
 - **Check `curl https://your-domain/api/me` reports a non-null `turnstileSiteKey`.** If it is
-  null, the challenge is off and the sign-in form is open to scripts.
+  null, the challenge is off and anything that can POST can help itself to model time.
 - Add the real hostname to the Turnstile widget's allowed hostnames, or the widget will not render
   there.
-- Send yourself a code on the live site to confirm mail is delivering from the onboarded domain.
-- Ask one question to confirm the model key works, and check the counter in the header drops to
-  49 of 50.
+- Ask one question to confirm the model key works, and check the counter drops to 9 of 10.
 
 ---
 
-# Accounts and the daily allowance
+# Messages, and what stands in front of them
 
-## How signing in works
+## How you get messages
 
-There is no password and no sign-up form. Both are the same flow:
+There is no account, no address, no password and nothing to sign in to. Passing a Turnstile
+challenge is the whole of the entitlement:
 
-1. `POST /api/auth/request-code` mints a six-digit code, stores its SHA-256 hash against the
-   address, and mails the plaintext once. One outstanding code per address — asking again replaces
-   the old one, which is what invalidates it.
-2. `POST /api/auth/verify` compares hashes. On a match the code row is deleted, the account is
-   created if it did not exist, and a session cookie is set. Nothing is granted with it — the
-   allowance belongs to the address, not to the account, and it is the same fifty a day either
-   way.
+1. `POST /api/challenge` with the widget's token. The token is verified with Cloudflare, and
+   `MESSAGES_PER_CHALLENGE` messages — **10**, set in `server/env.ts` — are put on a grant.
+2. The grant is 32 random bytes in an `HttpOnly; SameSite=Lax` cookie, good for 30 days. Only its
+   SHA-256 hash reaches D1, so a leaked copy of the `grants` table cannot be turned back into a
+   working cookie. `Secure` is set on https and omitted on `http://localhost`, where the browser
+   would drop it.
+3. Spend all ten and the composer is replaced by the challenge again. Passing it fills the same
+   grant back up.
 
-Codes last 10 minutes and die after 5 wrong guesses. A Turnstile challenge, and a stack of rate
-limits, sit in front of step 1 — see *Abuse and rate limiting* below, which is where the reasoning
-for each of them is. `/api/auth/request-code` answers the same way whether or not the address has
-an account, so it cannot be used to find out who has one.
+A grant row is the whole story: a hash, a number, and an expiry.
 
-Sessions are 32 random bytes in an `HttpOnly; SameSite=Lax` cookie, good for 90 days. Only the
-hash is stored, so a leaked copy of the `sessions` table cannot be used to sign in as anyone.
-`Secure` is set on https and omitted on `http://localhost`, where the browser would drop it.
+```sql
+CREATE TABLE grants (
+	token_hash TEXT PRIMARY KEY,
+	remaining  INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+```
+
+**Refilling tops up rather than stacks.** A browser that already has a grant keeps its token and
+has `remaining` raised to ten, not raised *by* ten:
+
+```sql
+INSERT INTO grants (token_hash, remaining, expires_at) VALUES (?, 10, ?)
+ON CONFLICT(token_hash) DO UPDATE SET
+  remaining = MAX(grants.remaining, excluded.remaining),
+  expires_at = excluded.expires_at
+RETURNING remaining
+```
+
+Which is the point: solving challenges in bulk buys nothing, because ten of them are worth the
+same ten messages as one. Somebody who wants more has to arrive as a new browser and pass a fresh
+challenge for every ten messages.
 
 ## How a message gets spent
 
-Every address gets `DAILY_MESSAGES` messages a day — **50**, set in `server/env.ts`. Nothing is
-stored per account to make that work. The allowance is counted by the same fixed-window counter as
-every abuse limit, in one row of `rate_limits` keyed on the address and the day:
+`/api/ask` refuses anyone without a grant (**401**), and spends before doing any work:
 
 ```sql
-INSERT INTO rate_limits (bucket, count, expires_at) VALUES ('messages-email-d:you@example.com:20353', 1, ?)
-ON CONFLICT(bucket) DO UPDATE SET count = count + 1
-RETURNING count
+UPDATE grants SET remaining = remaining - 1
+WHERE token_hash = ? AND remaining > 0 AND expires_at > ?
+RETURNING remaining
 ```
 
-`/api/ask` refuses anyone without a session (401). With one, it spends before doing any work: a
-count back over 50 means the day is used up, and the request is refused with **429** and a
-`Retry-After` naming the seconds until midnight UTC. Incrementing and reading in one statement is
-what stops two questions sent at the same moment from both seeing the day's last message and both
-spending it. If the answer then fails before a single word is emitted, the message is put back; a
-stream that breaks part-way through stays spent, because an answer was given. What is left is
-streamed to the browser as a `balance` event ahead of the text, so the counter in the header
-settles immediately rather than after the model finishes.
+No row back means the grant is spent, and the request is refused with **429** and a message saying
+another challenge is worth another ten. Decrementing and reading in one statement is what stops
+two questions sent at the same moment from both seeing the last message and both spending it, and
+the `remaining > 0` guard is what makes the second one fail rather than go negative.
 
-Two consequences worth knowing, both deliberate:
+If the answer then fails before a single word is emitted, the message is put back; a stream that
+breaks part-way through stays spent, because an answer was given. What is left is streamed to the
+browser as a `balance` event ahead of the text, so the counter settles immediately rather than
+after the model finishes.
 
-- **The window is fixed, not rolling.** It resets at midnight UTC, so somebody who spends all
-  fifty at 23:59 has fifty more a minute later. That is the coarseness the whole limiter is built
-  on, and it costs at most one extra day.
-- **The key is the address, not the account.** Signing out, signing in on another device, or
-  deleting the account and signing up again all land in the same day's bucket.
+## Abuse
 
-## Abuse and rate limiting
+One thing here costs real money — **model time** — and it is given away, so that is what is
+defended. Exactly one thing defends it: **the challenge**.
 
-Three things here cost real money or real goodwill, so those are what is defended: **sending mail
-to strangers**, **giving away model time**, and **model calls**. Everything else follows from
-those.
+Without it, `/api/challenge` is a faucet — a script POSTs in a loop, collects a fresh cookie with
+ten messages each time, and the only thing slowing it down is how fast it can open connections.
+With it, every ten messages costs a solved challenge.
 
-### The mail cannon
+**There are no per-IP counters, and nothing about a visitor is stored.** That is a deliberate
+deletion, not an omission. Turnstile already decides how hard a given visitor has to work and how
+often, using signals — browser fingerprint, behaviour, reputation, Cloudflare's view of the whole
+network — that a fixed-window counter in D1 cannot see. Counting requests per IP on top of that is
+a worse copy of a job already being done, and it is the part that would have needed to remember
+people.
 
-`/api/auth/request-code` will mail a six-digit code to any address it is given. A script walking a
-list turns this site into a spam source, burns the monthly send quota, and gets the sending domain
-blacklisted. The per-address cooldown does nothing about it, because every request in that attack
-uses a different address.
+The trade is honest: with no counter, the ceiling on what one attacker can spend is *however many
+challenges Cloudflare will let them pass*, not a number written in this repository. Two levers
+move it, and neither is application code:
 
-So, in order: **Turnstile**, then a **per-IP limit**, then per-address limits. The challenge is
-first so that a person who solves it is never spending budget a bot already used up.
+- **Turnstile's widget mode.** **Managed** is the default and adapts per visitor. Raising it is
+  the first response if abuse ever starts.
+- **A Cloudflare WAF rate-limiting rule on `/api/challenge`.** Configured in the dashboard, it
+  runs at the edge before any of this code does, and it is the right place for a hard cap because
+  it costs nothing to serve a request it blocks.
 
-### Every limit
-
-All of them live in `LIMITS` in `server/env.ts`, counted in D1 by `server/ratelimit.ts`. Fixed
-windows, so someone timing it right gets up to twice the number across a boundary — that is fine
-for what these defend.
-
-| Limit | Value | Stops |
-|---|---|---|
-| Codes per IP | 10 / hour | mass mailing from one place |
-| Codes per address | 5 / hour, 15 / day | mail-bombing one person |
-| Cooldown between codes | 45 seconds | double-clicking the button |
-| Guesses per code | 5, then the code dies | brute-forcing one code |
-| Verify attempts per IP | 20 / hour | brute-forcing across many addresses |
-| New accounts per IP | 5 / day | farming daily allowances |
-| Messages per address | 50 / day | one address running up the model bill |
-
-### What a six-digit code is actually worth
-
-The code limits and the five-guess cap together cap an attacker at 15 codes × 5 guesses = **75
-attempts a day** against one address, out of a million. That is roughly a **2.7% chance over a
-year** of continuous attack — during which the victim is receiving fifteen unexplained sign-in
-emails a day, every day, and the prize is an account with fifty messages a day on it.
-
-That is the trade a six-digit code makes, and it is the right one here. If you want it gone,
-change the code length in `issueLoginCode` (`server/accounts.ts`) to eight digits and the odds
-drop by a factor of a hundred, at the cost of two more keystrokes.
+`MESSAGES_PER_CHALLENGE` in `server/env.ts` is the one number here that moves the bill: it decides
+what a single solved challenge is worth.
 
 ### The rest of it
 
-- **Model time is the whole spend.** Nothing is charged for, so every message is given away. One
-  address costs at most `DAILY_MESSAGES` × ~$0.04 a day — about **$2**, every day, forever. That
-  number times the number of addresses a script can create is the bill, which is why Turnstile and
-  5 signups per IP per day matter more here than anywhere else in this file. `DAILY_MESSAGES` in
-  `server/env.ts` is the lever if it ever gets abused.
 - **History is clipped.** The browser holds the conversation and hands it back with every
   question, so an attacker controls it too. Each turn is checked for shape and clipped to
   `MAX_QUESTION_CHARS`, and only the last `MAX_HISTORY_MESSAGES` are kept — otherwise one message
   of the allowance buys an arbitrarily large prompt.
-- **Cross-origin writes are refused.** The session cookie is `SameSite=Lax`, which is what
-  actually stops another site from riding it; every state-changing endpoint also checks `Origin`
-  as a second lock.
-- **Codes and sessions are stored hashed**, so a leaked copy of either table is not usable.
-- **`/api/auth/request-code` answers identically** whether or not the address has an account, so
-  it cannot be used to find out who has one.
-- **Expired rows are swept** — codes, sessions, rate-limit windows — on a small fraction of
-  requests, since there is no cron in a Pages Function.
+- **Cross-origin writes are refused.** The grant cookie is `SameSite=Lax`, which is what actually
+  stops another site from riding it; `/api/ask` and `/api/challenge` also check `Origin` as a
+  second lock.
+- **Grant tokens are stored hashed**, so a leaked copy of the table is not usable.
+- **Turnstile failing open.** If Cloudflare's verify endpoint is unreachable, `verifyTurnstile`
+  logs and lets the request through rather than locking everyone out. Nothing else is checking, so
+  that outage is genuinely open — the trade is that a Cloudflare outage does not also take the
+  site down.
+- **Expired grants are swept** on a small fraction of requests, since there is no cron in a Pages
+  Function.
 
 ### Not covered
 
-- **A distributed attacker with many IPs** gets a proportional multiple of the per-IP limits. Add
-  a Cloudflare WAF rate-limiting rule on `/api/auth/*` if that ever shows up; it acts at the edge,
-  before any of this code runs.
-- **Disposable-address services** work fine for collecting allowances, and here each one is worth
-  fifty messages a day rather than ten once. Blocking them is an arms race; the per-IP signup
-  limit and Turnstile are what actually bound it, so watch that number rather than the domains.
+- **Nothing here caps total spend.** Every message given away is a solved challenge, but the
+  number of challenges is Cloudflare's call, not this code's. Watch the OpenRouter balance rather
+  than trusting a number in this repository, and put a spend limit on the key.
+- **Commercial CAPTCHA solvers** cost real money per solve, which is most of why the challenge
+  works at all — but they exist. Turnstile's widget mode and a WAF rule are the responses, both in
+  the dashboard.
 
-## What an account stores
+## What is stored
 
-An id, an email address, and a creation timestamp. That is the whole of the `users` table — there
-is not even a balance on it. There is no history, no profile, and the conversation itself never
-leaves `localStorage` in the browser.
+The SHA-256 of a cookie, a number of messages left, and an expiry. That is the whole of the
+`grants` table. There is no address, no account, no profile, no history — and the conversation
+itself never leaves `localStorage` in the browser.
 
-`DELETE /api/account` erases the user row, every session, and any outstanding sign-in code, and
-clears the cookie. Today's count in `rate_limits` is deliberately left alone, since it is keyed on
-the address: deleting and signing up again is not a way to start the day over, which the
-confirmation says before you click it. That row ages out on its own at midnight.
+Clearing the cookie is all "starting over" means, and it costs a challenge.
 
 ## Running costs
 
@@ -479,26 +430,24 @@ retrieved exchanges are ~13k, so about **32k input tokens per question**. On Ink
 OpenRouter ($1/M in, $4.05/M out) that is roughly **$0.04** per question. On Claude Opus 5 it was
 roughly **$0.18** cold or **$0.09** with the prompt cache warm — that caching only applies on the
 Anthropic path, where the system prompt is sent as a cacheable block. Workers AI embeddings are
-effectively free at this volume. Cloudflare's free plan caps Pages Functions CPU at 10ms per request, which the first
-request after a cold start can exceed; the $5 Workers Paid plan removes that limit — and is
-required anyway, since Email Sending only runs on it.
+effectively free at this volume. Cloudflare's free plan caps Pages Functions CPU at 10ms per
+request, which the first request after a cold start can exceed; the $5 Workers Paid plan removes
+that limit.
 
-Nothing is charged for, so all of that is spend. What one address can cost, if it spends all
-fifty of its messages every day:
+Nothing is charged for, so all of that is spend. What one passed challenge is worth:
 
-| | Per question | One address, per day | 100 such addresses, per day |
-|---|---|---|---|
-| OpenRouter (the default) | ~$0.04 | **~$2** | ~$200 |
-| Claude Opus 5, cache warm | ~$0.09 | **~$4.50** | ~$450 |
+| | Per question | One challenge (10 messages) |
+|---|---|---|
+| OpenRouter (the default) | ~$0.04 | **~$0.40** |
+| Claude Opus 5, cache warm | ~$0.09 | **~$0.90** |
 
-Most accounts will not come close to fifty a day, but the ceiling is what a script would aim for,
-and it is the number to size the budget against. `DAILY_MESSAGES` in `server/env.ts` is the only
-line that moves it — halving it halves the worst case, for everyone, immediately. A cheaper
-`MODEL` is the other lever, and it moves the per-question figure instead.
+There is no cap above that — see *Abuse* — so the thing to size is the spend limit on the
+OpenRouter key, not a constant in this repository. `MESSAGES_PER_CHALLENGE` in `server/env.ts`
+halves or doubles what each solved challenge costs; a cheaper `MODEL` moves the per-question
+figure instead.
 
-D1 and email are effectively free at this scale: D1's free tier covers 5M row reads a day, and the
-Workers Paid plan includes 3,000 emails a month (then $0.35 per 1,000) — at one email per sign-in,
-and a session lasting 90 days, that is a lot of people.
+D1 is effectively free at this scale: the free tier covers 5M row reads a day, and a question is a
+couple of them.
 
 ## A note on what is public
 
@@ -565,8 +514,8 @@ Writes into `public/corpus/`:
 
 ## How `/api/ask` answers
 
-0. Requires a session and counts one message against today's allowance for that address — see
-   *Accounts and the daily allowance* above.
+0. Requires a grant with a message left on it, and counts that message before any work is done —
+   see *Messages, and what stands in front of them* above.
 1. Embeds the question with the model recorded in `meta.json` (so query and corpus can never drift
    apart).
 2. Cosine-ranks every exchange, collapses groups, keeps the top 10.

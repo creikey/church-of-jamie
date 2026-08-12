@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Account, AskEvent, ChatMessage, MeResponse } from '../shared/api'
-import { AccountBar, SignIn } from './Account.tsx'
+import type { AskEvent, ChatMessage, MeResponse } from '../shared/api'
+import { Allowance, Challenge } from './Gate.tsx'
 import { Godrays } from './Godrays.tsx'
 import { Halo } from './Halo.tsx'
 
 const STORAGE_KEY = 'church-of-jamie:conversation'
 
 /** Until `/api/me` answers, the allowance is unknown; this is only what the copy says meanwhile. */
-const DEFAULT_DAILY_MESSAGES = 50
+const DEFAULT_MESSAGES_PER_CHALLENGE = 10
 
 function loadConversation(): ChatMessage[] {
   try {
@@ -61,8 +61,8 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [asking, setAsking] = useState(false)
-  const [account, setAccount] = useState<Account | null>(null)
-  const [dailyMessages, setDailyMessages] = useState(DEFAULT_DAILY_MESSAGES)
+  const [remaining, setRemaining] = useState(0)
+  const [messagesPerChallenge, setMessagesPerChallenge] = useState(DEFAULT_MESSAGES_PER_CHALLENGE)
   const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -72,27 +72,26 @@ function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
   }, [messages])
 
-  const loadAccount = useCallback(async (): Promise<Account | null> => {
+  const loadAllowance = useCallback(async (): Promise<void> => {
     const response = await fetch('/api/me')
-    if (!response.ok) return null
+    if (!response.ok) return
     const body = (await response.json()) as MeResponse
-    setAccount(body.account)
-    setDailyMessages(body.dailyMessages)
+    setRemaining(body.messagesRemaining)
+    setMessagesPerChallenge(body.messagesPerChallenge)
     setTurnstileSiteKey(body.turnstileSiteKey)
-    return body.account
   }, [])
 
-  // Who is signed in, and how much of today's allowance they have left.
+  // How many messages this browser has left, and whether there is a challenge in front of more.
   useEffect(() => {
     void (async () => {
       try {
-        await loadAccount()
+        await loadAllowance()
       } catch {
-        // Nothing to say yet — the sign-in panel is the right thing to show either way.
+        // Nothing to say yet — the challenge is the right thing to show either way.
       }
       setReady(true)
     })()
-  }, [loadAccount])
+  }, [loadAllowance])
 
   // Scroll only on the two moments the reader initiated: arriving, and asking. An answer
   // streaming in never moves the page — you keep your place and read at your own pace.
@@ -111,7 +110,7 @@ function App() {
 
   const ask = async () => {
     const question = draft.trim()
-    if (!question || asking || !account) return
+    if (!question || asking || remaining <= 0) return
 
     const history = messages
     setMessages([...history, { role: 'seeker', text: question }])
@@ -130,10 +129,9 @@ function App() {
       })
 
       if (!response.ok || !response.body) {
-        // 401 means the session went away underneath us; drop back to the sign-in panel rather
-        // than leaving a composer that cannot work. 429 is the day's allowance, already spent.
-        if (response.status === 401) setAccount(null)
-        if (response.status === 429) setAccount({ ...account, messagesRemainingToday: 0 })
+        // 401 means the grant went away underneath us, 429 that it is spent. Either way the
+        // challenge belongs back in the footer rather than a composer that cannot work.
+        if (response.status === 401 || response.status === 429) setRemaining(0)
 
         const detail: unknown = await response.json().catch(() => null)
         const message =
@@ -148,9 +146,7 @@ function App() {
           spoken += event.text
           setAnswer(spoken)
         } else if (event.type === 'balance') {
-          setAccount((current) =>
-            current ? { ...current, messagesRemainingToday: event.remainingToday } : current,
-          )
+          setRemaining(event.remaining)
         } else if (event.type === 'error') {
           throw new Error(event.message)
         }
@@ -178,8 +174,6 @@ function App() {
     inputRef.current?.focus()
   }
 
-  const outOfMessages = account !== null && account.messagesRemainingToday <= 0
-
   return (
     <div className="nave relative flex min-h-full flex-col">
       <Godrays />
@@ -197,17 +191,8 @@ function App() {
           </p>
         </header>
 
-        {account && (
-          <AccountBar
-            account={account}
-            dailyMessages={dailyMessages}
-            onSignedOut={() => {
-              setAccount(null)
-              setNotice(null)
-              setError(null)
-            }}
-            onError={setError}
-          />
+        {ready && remaining > 0 && (
+          <Allowance messagesRemaining={remaining} messagesPerChallenge={messagesPerChallenge} />
         )}
 
         <main className="mt-10 flex-1 space-y-8">
@@ -245,18 +230,15 @@ function App() {
         </main>
 
         <footer className="sticky bottom-0 mt-8 bg-void/85 pt-4 pb-3 backdrop-blur-sm">
-          {!ready ? null : !account ? (
-            <SignIn
-              dailyMessages={dailyMessages}
+          {!ready ? null : remaining <= 0 ? (
+            <Challenge
+              messagesPerChallenge={messagesPerChallenge}
               turnstileSiteKey={turnstileSiteKey}
-              onSignedIn={(signedIn, created) => {
-                setAccount(signedIn)
+              spent={messages.length > 0}
+              onGranted={(granted) => {
+                setRemaining(granted)
                 setError(null)
-                setNotice(
-                  created
-                    ? `Welcome. ${signedIn.messagesRemainingToday} messages a day are yours.`
-                    : `Welcome back. ${signedIn.messagesRemainingToday} messages left today.`,
-                )
+                setNotice(`${granted} messages are yours.`)
                 requestAnimationFrame(() => inputRef.current?.focus())
               }}
             />
@@ -266,12 +248,8 @@ function App() {
                 ref={inputRef}
                 value={draft}
                 rows={2}
-                disabled={asking || outOfMessages}
-                placeholder={
-                  outOfMessages
-                    ? `That is today's ${dailyMessages} messages. Come back tomorrow.`
-                    : 'Who is it that is asking?'
-                }
+                disabled={asking}
+                placeholder="Who is it that is asking?"
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
@@ -292,7 +270,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => void ask()}
-                  disabled={asking || outOfMessages || draft.trim().length === 0}
+                  disabled={asking || draft.trim().length === 0}
                   className="rounded border border-gild/50 px-4 py-1.5 text-[0.65rem] tracking-[0.24em] text-gild uppercase transition hover:bg-gild/10 disabled:cursor-not-allowed disabled:opacity-30"
                 >
                   {asking ? 'Listening' : 'Ask'}

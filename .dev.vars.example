@@ -17,22 +17,11 @@ CLOUDFLARE_ACCOUNT_ID=
 # with the single permission: Account · Workers AI · Read
 CLOUDFLARE_AI_TOKEN=
 
-# ---------------------------------------------------------------- email (Cloudflare Email Service)
-# Uses CLOUDFLARE_ACCOUNT_ID from above as well. Requires the Workers Paid plan and a domain
-# onboarded under dashboard → Compute → Email Service → Email Sending. See PRODUCTION_SETUP.md.
-
-# A second API token, separate from the Workers AI one: Account · Email Sending · Edit
-CLOUDFLARE_EMAIL_TOKEN=
-
-# Who mail comes from. Must be an address on the onboarded domain. The display name is optional —
-# a bare jamie@yourdomain.com works too.
-EMAIL_FROM=Church of Jamie <jamie@yourdomain.com>
-
 # ---------------------------------------------------------------- bot challenge (Turnstile)
 
 # https://dash.cloudflare.com → Turnstile → Add widget. Both keys, or neither: with either one
-# missing the challenge is not shown and not checked, which in production means anyone can make
-# this site mail a six-digit code to any address they like, as fast as the rate limits allow.
+# missing the challenge is not shown and not checked — and since nothing else meters anything,
+# that means anyone can help themselves to messages in a loop, as fast as they can send requests.
 #
 # Cloudflare's always-passes test pair, for local development:
 #   TURNSTILE_SITE_KEY=1x00000000000000000000AA
