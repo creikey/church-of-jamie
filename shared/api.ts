@@ -18,23 +18,24 @@ export interface AskRequest {
 export type AskEvent =
 	| { type: 'text'; text: string }
 	| { type: 'error'; message: string }
-	/** Sent once, before the answer, with what is left after paying for this one. */
-	| { type: 'balance'; remaining: number }
+	/** Sent once, before the answer, with what is left of today's allowance after this one. */
+	| { type: 'balance'; remainingToday: number }
 	| { type: 'done' };
 
 // ---------------------------------------------------------------- accounts
 
-/** Everything an account is. There is nothing else stored about a person. */
+/** Everything an account is. The address is the only thing stored about a person. */
 export interface Account {
 	email: string;
-	messagesRemaining: number;
+	/** Messages left in today's allowance, out of `dailyMessages`. */
+	messagesRemainingToday: number;
 }
 
 /** GET /api/me — `account` is null when nobody is signed in. */
 export interface MeResponse {
 	account: Account | null;
-	/** What one purchase costs and buys, so the button can label itself from the server. */
-	pricing: { messages: number; priceCents: number };
+	/** Messages every address gets per day, so the copy can name the number from the server. */
+	dailyMessages: number;
 	/** Turnstile's public key, or null when the challenge is not configured on this deployment. */
 	turnstileSiteKey: string | null;
 }
@@ -59,11 +60,6 @@ export interface VerifyCodeRequest {
 
 export interface VerifyCodeResponse {
 	account: Account;
-	/** True the first time an address signs in, when the free messages were granted. */
+	/** True the first time an address signs in, when the account came into existence. */
 	created: boolean;
-}
-
-/** POST /api/checkout — the hosted Stripe page to send the browser to. */
-export interface CheckoutResponse {
-	url: string;
 }

@@ -1,16 +1,16 @@
 # Production Setup
 
-Everything needed to take this from a clone to a live site that signs people in, answers
-questions, and takes money. Follow it top to bottom — the order matters, because several steps
-need a value produced by an earlier one.
+Everything needed to take this from a clone to a live site that signs people in and answers
+questions. Follow it top to bottom — the order matters, because several steps need a value
+produced by an earlier one.
 
-Budget about an hour, most of which is waiting for DNS and filling in Stripe's business details.
+Budget about half an hour, most of which is waiting for DNS.
 
 **How to read this**
 
 - Every step ends with a **✅ Check** — a command or a thing you should see. Do not move to the
   next step until it passes. That is the whole point of the ordering; a wrong value in step 5
-  shows up as a confusing failure in step 19 otherwise.
+  shows up as a confusing failure in step 14 otherwise.
 - Replace `yourdomain.com` with your real domain and `church-of-jamie` with your real project name
   everywhere. If you pick a different project name, use it consistently — it appears in
   `wrangler.toml`, in every `--project-name` flag, and in the D1 commands.
@@ -27,10 +27,11 @@ Budget about an hour, most of which is waiting for DNS and filling in Stripe's b
 | Cloudflare Email Sending | 3,000 emails/month included, then $0.35 per 1,000 | — |
 | A domain | ~$10 / year | **Yes** — email cannot be sent without one |
 | OpenRouter credit | ~$0.04 per question answered | **Yes** |
-| Stripe | 2.9% + 30¢ per sale (~36¢ on $5) | **Yes** |
 
-At $5 for 100 messages you are roughly at break-even on model cost. See *Running costs* in the
-README before you decide that is the price you want.
+Nothing is charged for: every address gets **50 messages a day**, free. That is the only number
+that decides the bill — at ~$0.04 a question, one address that uses its whole allowance every day
+costs about **$2 a day**. Read *Running costs* in the README, and set `DAILY_MESSAGES` in
+`server/env.ts` to something you are happy to pay for, before you put this in front of anyone.
 
 ## What you need before starting
 
@@ -39,13 +40,8 @@ README before you decide that is the price you want.
   A record. If the domain is registered elsewhere, add it at
   https://dash.cloudflare.com → **Add a domain** and change the nameservers at your registrar
   first. This can take a few hours to propagate; start it now if it is not done.
-- **A Cloudflare account**, **a Stripe account**, and **an OpenRouter account**.
-- The Discord export folder, if you are rebuilding the corpus (step 14).
-
-> **One decision up front.** Steps 12 and 19 have you use Stripe **test mode**, so you can run the
-> whole flow with a fake card before real money is involved. Step 22 is the switch to live. Do not
-> skip ahead — the test keys and live keys have separate webhooks and separate signing secrets,
-> and mixing them is the single most common way this breaks.
+- **A Cloudflare account** and **an OpenRouter account**.
+- The Discord export folder, if you are rebuilding the corpus (step 11).
 
 ---
 
@@ -117,7 +113,7 @@ npm run db:remote
 npx wrangler d1 execute church-of-jamie --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
 ```
 
-Lists: `login_codes`, `purchases`, `rate_limits`, `sessions`, `users`.
+Lists: `login_codes`, `rate_limits`, `sessions`, `users`.
 
 > Re-run these two commands any time `schema.sql` changes. Every statement is `IF NOT EXISTS`, so
 > it is safe to run repeatedly.
@@ -225,59 +221,14 @@ address they like, which burns your quota and gets your domain blacklisted.
 3. Hostnames — add **all** of these:
    - `yourdomain.com`
    - `www.yourdomain.com` (if you will use it)
-   - `church-of-jamie.pages.dev` (the Pages URL from step 15 — add it now, it is predictable)
+   - `church-of-jamie.pages.dev` (the Pages URL from step 13 — add it now, it is predictable)
    - `localhost`
 4. Widget Mode: **Managed**
 5. Create → copy **Site Key** → `TURNSTILE_SITE_KEY`, **Secret Key** → `TURNSTILE_SECRET_KEY`
 
-**✅ Check** — you have two keys, and `localhost` is in the hostname list (step 16 needs it).
+**✅ Check** — you have two keys, and `localhost` is in the hostname list (step 12 needs it).
 
-## 10. Get your Stripe test key
-
-1. https://dashboard.stripe.com → make sure the **Test mode** toggle (top right) is **on**
-2. **Developers** → **API keys**
-3. Reveal and copy the **Secret key**, which starts `sk_test_` → `STRIPE_SECRET_KEY`
-
-There is nothing else to create in Stripe. No Product, no Price — the checkout page is built from
-the constants in `server/env.ts`.
-
-**✅ Check** — your key starts with `sk_test_`, not `pk_` (that is the publishable key, which this
-app does not use) and not `sk_live_`.
-
-### A word on Managed Payments
-
-Stripe turns **Managed Payments** on by default for new accounts, and this integration is written
-for it. Stripe becomes the merchant of record: it registers for and remits VAT and sales tax in
-75+ countries, fights disputes, and issues the invoice and its own confirmation email. That costs
-[3.5% on top of standard processing](https://support.stripe.com/questions/managed-payments-pricing)
-— a $5 sale pays 6.4% + 30¢ instead of 2.9% + 30¢, so you net $4.38 rather than $4.56.
-
-Against roughly $4.00 of model cost per 100 messages, that is the difference between about 38¢ and
-56¢ of margin. Worth knowing before you decide $5 is the price; see *Running costs* in the README.
-
-**Nothing to do here** — it is already on and the code already matches it. If you would rather
-have the 18¢ and handle tax registration yourself, turn it off under **Settings → Payments**, then
-add `'invoice_creation[enabled]': 'true'` back to `createCheckoutSession` in `server/stripe.ts`.
-Leaving that parameter in while Managed Payments is on is rejected with *"Unsupported parameter:
-invoice_creation"* at the moment someone clicks Buy.
-
-Buyers get two emails: Stripe's confirmation and ours. Turn Stripe's off under **Settings →
-Customer emails** if one is enough.
-
-## 11. Install the Stripe CLI
-
-Needed to test payments locally, because the balance only moves when Stripe calls back.
-
-```bash
-brew install stripe/stripe-cli/stripe
-stripe login
-```
-
-(Not on a Mac: https://docs.stripe.com/stripe-cli)
-
-**✅ Check** — `stripe --version` prints a version.
-
-## 12. Write `.dev.vars`
+## 10. Write `.dev.vars`
 
 ```bash
 cp .dev.vars.example .dev.vars
@@ -291,8 +242,6 @@ CLOUDFLARE_ACCOUNT_ID=<from step 1>
 CLOUDFLARE_AI_TOKEN=<from step 7>
 CLOUDFLARE_EMAIL_TOKEN=<from step 6>
 EMAIL_FROM=Church of Jamie <jamie@yourdomain.com>
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=<step 13 fills this in>
 TURNSTILE_SITE_KEY=<from step 9>
 TURNSTILE_SECRET_KEY=<from step 9>
 ```
@@ -306,25 +255,9 @@ model. Leave it out otherwise.
 grep -c . .dev.vars
 ```
 
-Nine or more non-empty lines, and no value still reads `...`.
+Seven or more non-empty lines, and no value still reads `...`.
 
-## 13. Get the local webhook secret
-
-In a terminal you will leave running:
-
-```bash
-stripe listen --forward-to localhost:8788/api/stripe-webhook
-```
-
-It prints `Your webhook signing secret is whsec_...`. Put that in `.dev.vars` as
-`STRIPE_WEBHOOK_SECRET`.
-
-> This secret is different from the production one you create in step 18. Leave `stripe listen`
-> running for the whole of step 16.
-
-**✅ Check** — `.dev.vars` has a `STRIPE_WEBHOOK_SECRET` starting `whsec_`.
-
-## 14. Build the corpus
+## 11. Build the corpus
 
 Skip this if `public/corpus/` already has four files in it.
 
@@ -343,9 +276,7 @@ ls public/corpus/
 
 Shows `corpus.bin`, `meta.json`, `source.txt`, `vectors.bin`.
 
-## 15. Test the whole thing locally
-
-In a second terminal (leave `stripe listen` running in the first):
+## 12. Test the whole thing locally
 
 ```bash
 npm run dev
@@ -356,23 +287,24 @@ Open http://localhost:8788 and walk the entire path:
 1. Enter your real email address. The Turnstile checkbox must appear and go green — if it does
    not, `localhost` is missing from the widget's hostnames (step 9).
 2. **Send code**. The email arrives within a few seconds.
-3. Type the six digits. You are signed in, and the bar reads **10 left**.
-4. Ask a question. The counter drops to **9** and an answer streams in. *(The first question is
-   slow — the worker is pulling the corpus into memory.)*
-5. Click **Buy 100 · $5.00**. Pay with card `4242 4242 4242 4242`, any future expiry, any CVC, any
-   postcode.
-6. You land back on the site and the counter climbs to **109** within a few seconds. A receipt
-   email arrives with a link to a Stripe invoice.
-7. **Delete** → **Delete forever**. You are back at the sign-in panel.
+3. Type the six digits. You are signed in, and the bar reads **50 of 50 left today**.
+4. Ask a question. The counter drops to **49 of 50 left today** and an answer streams in. *(The
+   first question is slow — the worker is pulling the corpus into memory.)*
+5. **Delete** → **Delete forever**. You are back at the sign-in panel. Sign in again with the same
+   address and the counter still reads **49** — the allowance is counted per address, not per
+   account, so deleting is not a way to start the day over.
 
-**✅ Check** — all seven worked. If step 6's counter never moved, look at the `stripe listen`
-terminal: it prints every event it forwarded and the status it got back. A `400` there means
-`STRIPE_WEBHOOK_SECRET` does not match; re-copy it from step 13 and **restart `npm run dev`** —
-wrangler only reads `.dev.vars` at startup.
+**✅ Check** — all five worked. If the counter never moves, the day's row in D1 is the place to
+look:
 
-Stop `npm run dev` and `stripe listen` when you are done.
+```bash
+npx wrangler d1 execute church-of-jamie --local --command \
+  "SELECT bucket, count FROM rate_limits WHERE bucket LIKE 'messages-email-d:%'"
+```
 
-## 16. Create the Pages project and deploy
+Stop `npm run dev` when you are done.
+
+## 13. Create the Pages project and deploy
 
 ```bash
 npm run build
@@ -387,7 +319,7 @@ It prints a URL like `https://church-of-jamie.pages.dev`.
 **✅ Check** — open the URL. The page loads, with the sign-in panel at the bottom. Nothing will
 work yet; the secrets come next.
 
-## 17. Set the production secrets
+## 14. Set the production secrets
 
 Production does **not** read `.dev.vars`. Each command prompts for a value and stores it
 encrypted; you only do this once, and redeploys keep them.
@@ -398,13 +330,9 @@ npx wrangler pages secret put CLOUDFLARE_ACCOUNT_ID  --project-name church-of-ja
 npx wrangler pages secret put CLOUDFLARE_AI_TOKEN    --project-name church-of-jamie
 npx wrangler pages secret put CLOUDFLARE_EMAIL_TOKEN --project-name church-of-jamie
 npx wrangler pages secret put EMAIL_FROM             --project-name church-of-jamie
-npx wrangler pages secret put STRIPE_SECRET_KEY      --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SITE_KEY     --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SECRET_KEY   --project-name church-of-jamie
 ```
-
-`STRIPE_WEBHOOK_SECRET` is deliberately missing — it comes in step 18, because it does not exist
-until the endpoint does.
 
 **✅ Check**
 
@@ -419,69 +347,23 @@ off and your sign-in form is open to scripts.
 `church-of-jamie` → **Settings** → **Bindings**. There should be a **D1 database** binding named
 `DB` pointing at `church-of-jamie`. If it is missing, add it by hand and redeploy.
 
-## 18. Create the production Stripe webhook
-
-**This is the step that actually gives people their messages.** Coming back from Checkout proves
-nothing; the balance only moves when Stripe calls this endpoint. Skip it and people pay and get
-nothing.
-
-1. https://dashboard.stripe.com/webhooks — **Test mode** still on
-2. **Add endpoint**
-3. Endpoint URL: `https://church-of-jamie.pages.dev/api/stripe-webhook`
-   (use your custom domain instead if you did step 19 first)
-4. **Select events** → search `checkout.session.completed` → tick **only** that one
-5. **Add endpoint**
-6. On the endpoint's page, **Signing secret** → **Reveal** → copy the `whsec_...`
-
-```bash
-npx wrangler pages secret put STRIPE_WEBHOOK_SECRET --project-name church-of-jamie
-```
-
-**✅ Check** — on the Stripe webhook page, **Send test webhook** → `checkout.session.completed`.
-The attempt should come back **200**. (It will say it was ignored in the response body, because
-the fake event has no user attached — 200 is the thing to look for.)
-
-## 19. Attach your custom domain (optional)
+## 15. Attach your custom domain (optional)
 
 1. https://dash.cloudflare.com → **Workers & Pages** → `church-of-jamie` → **Custom domains**
 2. **Set up a domain** → `yourdomain.com` (or a subdomain) → follow the prompt
 
 Cloudflare adds the DNS record itself.
 
-**If you do this, go back and update:**
-- The Stripe webhook URL (step 18) to the new domain
-- The Turnstile hostnames (step 9) to include it
+**If you do this, go back and update the Turnstile hostnames (step 9) to include it.**
 
 **✅ Check** — `curl -s https://yourdomain.com/api/me` returns the same JSON as the pages.dev URL.
 
-## 20. Full production smoke test
+## 16. Full production smoke test
 
-Do exactly what you did in step 15, but on the live URL, still with the test card. Use a
-**different email address** from the one in step 15 so you get a clean new account.
+Do exactly what you did in step 12, but on the live URL. Use a **different email address** from
+the one in step 12 so you get a clean new account with its own untouched allowance.
 
-**✅ Check** — all seven steps pass, on the real domain.
-
-## 21. Go live
-
-Everything so far has been Stripe test mode. To take real money:
-
-1. Complete Stripe's activation form (business details, bank account) if you have not.
-2. Turn the **Test mode** toggle **off**.
-3. **Developers** → **API keys** → copy the live **Secret key** (`sk_live_...`):
-   ```bash
-   npx wrangler pages secret put STRIPE_SECRET_KEY --project-name church-of-jamie
-   ```
-4. **Developers** → **Webhooks** → **Add endpoint** again, in live mode this time. Same URL, same
-   single event. Copy the **live** signing secret:
-   ```bash
-   npx wrangler pages secret put STRIPE_WEBHOOK_SECRET --project-name church-of-jamie
-   ```
-
-   The live endpoint and its secret are entirely separate from the test ones. This is the step
-   people forget, and the symptom is that payments succeed while nobody's balance moves.
-
-5. Buy once with a real card to confirm. Refund it from the Stripe dashboard afterwards if you
-   like — but note a refund does **not** take the messages back.
+**✅ Check** — all five steps pass, on the real domain.
 
 **✅ Final checklist**
 
@@ -490,12 +372,9 @@ curl -s https://yourdomain.com/api/me
 ```
 
 - [ ] `turnstileSiteKey` is a real key, not `null`
-- [ ] `pricing` reads `{"messages":100,"priceCents":500}`
-- [ ] A live-mode Stripe webhook exists, pointing at `/api/stripe-webhook`, subscribed to
-      `checkout.session.completed` only
-- [ ] Its **live** signing secret is set as `STRIPE_WEBHOOK_SECRET`
+- [ ] `dailyMessages` reads `50`
 - [ ] Sending a code to a fresh address works on the live domain
-- [ ] A real £/$5 purchase credits 100 messages and mails a receipt
+- [ ] The first question answers, and the bar reads **49 of 50 left today** afterwards
 
 ---
 
@@ -508,8 +387,6 @@ curl -s https://yourdomain.com/api/me
 | `CLOUDFLARE_AI_TOKEN` | API token, Account · Workers AI · Read | 7 |
 | `CLOUDFLARE_EMAIL_TOKEN` | API token, Account · Email Sending · Edit | 6 |
 | `EMAIL_FROM` | an address on your onboarded domain | 5 |
-| `STRIPE_SECRET_KEY` | Stripe → Developers → API keys | 10 / 21 |
-| `STRIPE_WEBHOOK_SECRET` | the webhook endpoint's signing secret | 13 / 18 / 21 |
 | `TURNSTILE_SITE_KEY` | Cloudflare → Turnstile → your widget | 9 |
 | `TURNSTILE_SECRET_KEY` | same widget | 9 |
 | `ANTHROPIC_API_KEY` | only if `MODEL` points at a Claude model | — |
@@ -517,37 +394,38 @@ curl -s https://yourdomain.com/api/me
 Not a secret, and not set this way: `database_id` in `wrangler.toml` (step 3). It ships with the
 deploy.
 
-## Changing the offer
+## Changing the allowance
 
-All three numbers live in `server/env.ts`:
+One number, in `server/env.ts`:
 
 ```ts
-export const FREE_MESSAGES = 10;
-export const MESSAGES_PER_PURCHASE = 100;
-export const PURCHASE_PRICE_CENTS = 500;
+export const DAILY_MESSAGES = 50;
 ```
 
-Edit, `npm run build`, redeploy. Nothing in Stripe needs touching — the checkout page is built
-from these on every purchase.
+Edit, `npm run build`, redeploy. It takes effect on the next question — the counters already in
+D1 are compared against the new number, so lowering it can leave somebody over their limit for the
+rest of that day, and raising it gives everyone the difference immediately.
+
+The copy follows it on its own: the sign-in panel, the account bar and the out-of-messages message
+all read the number from `/api/me` rather than hard-coding it, so there is nothing else to edit.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `RESEND_API_KEY is not set` | stale build | this project uses Cloudflare email now; `npm run build` and redeploy |
-| `CLOUDFLARE_EMAIL_TOKEN, EMAIL_FROM is not set on this deployment` | secrets missing in production | step 17 |
+| `CLOUDFLARE_EMAIL_TOKEN, EMAIL_FROM is not set on this deployment` | secrets missing in production | step 14 |
 | `the sending domain is not verified` | domain not onboarded, or `EMAIL_FROM` is on a different domain | step 5 |
 | `CLOUDFLARE_EMAIL_TOKEN was rejected` | permission added under Zone instead of Account | step 6 |
 | Code email never arrives | DNS not propagated, or in spam | re-run the ✅ Check in step 6 |
 | Turnstile box never appears | hostname not on the widget | step 9 |
 | `That challenge did not pass` every time | site key and secret key are from different widgets | step 9 |
-| `/api/me` shows `"turnstileSiteKey":null` | one of the two keys is unset in production | step 17 |
-| Paid, but the counter never moves | no webhook, wrong URL, or wrong signing secret | step 18; check the attempt log on Stripe's webhook page |
-| Webhook attempts show `400 Stripe signature does not match` | test secret on a live endpoint, or vice versa | step 21 |
-| `Unsupported parameter: invoice_creation` when clicking Buy | Managed Payments is on and `invoice_creation` was added back | remove it from `createCheckoutSession`, or turn Managed Payments off — step 10 |
+| `/api/me` shows `"turnstileSiteKey":null` | one of the two keys is unset in production | step 14 |
+| `That is all 50 messages for today` sooner than expected | the allowance is per address, and shared across every device signed in as it | expected; the count resets at midnight UTC |
 | `D1_ERROR: no such table: users` | schema not applied to the remote database | `npm run db:remote` |
-| `Cannot read properties of undefined (reading 'prepare')` | the `DB` binding is missing | step 17's second ✅ Check |
-| `Corpus asset /corpus/meta.json is not being served` | corpus not built, or not in `dist/` | step 14, then `npm run build` |
+| `D1_ERROR: no such table: rate_limits` | same, and nothing can be asked without it | `npm run db:remote` |
+| `Cannot read properties of undefined (reading 'prepare')` | the `DB` binding is missing | step 14's second ✅ Check |
+| `Corpus asset /corpus/meta.json is not being served` | corpus not built, or not in `dist/` | step 11, then `npm run build` |
 | Answers fail with an OpenRouter 402 | no credit on the key | step 8 |
 | Local changes to `.dev.vars` do nothing | wrangler reads it at startup | restart `npm run dev` |
 
@@ -559,4 +437,4 @@ npx wrangler pages deploy dist --project-name church-of-jamie
 ```
 
 Secrets, the database, and its contents all survive. You only revisit the steps above if you
-change `schema.sql` (re-run step 4) or rebuild the corpus (step 14).
+change `schema.sql` (re-run step 4) or rebuild the corpus (step 11).

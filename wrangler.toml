@@ -4,7 +4,7 @@ compatibility_flags = ["nodejs_compat"]
 
 pages_build_output_dir = "dist"
 
-# Accounts, sessions and the payment ledger. See `schema.sql`.
+# Accounts, sessions, sign-in codes and the limit counters. See `schema.sql`.
 #
 # `database_id` below must be the id printed by `npx wrangler d1 create church-of-jamie`.
 # Local development ignores it and uses a sqlite file under `.wrangler/`, so `npm run dev` works

@@ -20,7 +20,7 @@ export interface Limit {
 	windowSeconds: number;
 }
 
-export type Verdict = { ok: true } | { ok: false; retryAfter: number };
+export type Verdict = { ok: true; remaining: number } | { ok: false; retryAfter: number };
 
 /**
  * Counts one hit against `scope:identity` and says whether it is over the line.
@@ -47,10 +47,39 @@ export async function consume(
 		.bind(`${scope}:${identity}:${window}`, expiresAt)
 		.first<{ count: number }>();
 
-	if ((row?.count ?? 1) > limit.limit) {
+	const count = row?.count ?? 1;
+	if (count > limit.limit) {
 		return { ok: false, retryAfter: Math.max(1, expiresAt - timestamp) };
 	}
-	return { ok: true };
+	return { ok: true, remaining: limit.limit - count };
+}
+
+/**
+ * How many hits are left in the current window, without spending one.
+ *
+ * Only for showing a number to somebody — `consume` is what decides. A window with no row yet has
+ * never been touched, so the whole limit is left.
+ */
+export async function left(env: Env, scope: string, identity: string, limit: Limit): Promise<number> {
+	const window = Math.floor(now() / limit.windowSeconds);
+	const row = await env.DB.prepare('SELECT count FROM rate_limits WHERE bucket = ?')
+		.bind(`${scope}:${identity}:${window}`)
+		.first<{ count: number }>();
+	return Math.max(0, limit.limit - (row?.count ?? 0));
+}
+
+/**
+ * Gives one hit back, for work that was counted and then did not happen.
+ *
+ * `count > 0` keeps a double refund from minting allowance out of nothing. A window that rolls
+ * over between the `consume` and the refund credits the new window instead of the old — worth one
+ * extra message, once, and not worth threading the window through the caller to avoid.
+ */
+export async function refund(env: Env, scope: string, identity: string, limit: Limit): Promise<void> {
+	const window = Math.floor(now() / limit.windowSeconds);
+	await env.DB.prepare('UPDATE rate_limits SET count = count - 1 WHERE bucket = ? AND count > 0')
+		.bind(`${scope}:${identity}:${window}`)
+		.run();
 }
 
 /** Applies several limits, hardest-hit first. Every one is counted, so none can be starved. */
@@ -62,9 +91,13 @@ export async function consumeAll(
 		checks.map((check) => consume(env, check.scope, check.identity, check.limit)),
 	);
 
-	let worst: Verdict = { ok: true };
+	let worst: Verdict = { ok: true, remaining: Infinity };
 	for (const verdict of verdicts) {
-		if (!verdict.ok && (worst.ok || verdict.retryAfter > worst.retryAfter)) worst = verdict;
+		if (!verdict.ok) {
+			if (worst.ok || verdict.retryAfter > worst.retryAfter) worst = verdict;
+		} else if (worst.ok && verdict.remaining < worst.remaining) {
+			worst = verdict;
+		}
 	}
 	return worst;
 }

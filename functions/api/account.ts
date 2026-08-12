@@ -2,9 +2,8 @@
  * DELETE /api/account — erase the account.
  *
  * Immediate and unconfirmed by email, because there is nothing here worth a confirmation step:
- * an account is an address and a number. Any messages still on the balance are forfeited, and the
- * payment ledger keeps its rows with the link to the person removed — those are the record behind
- * an invoice, and Stripe holds the same payments regardless.
+ * an account is an address. Whatever is left of today's allowance stays spent — that counter is
+ * keyed on the address, not the account, so signing up again lands in the same day's bucket.
  */
 
 import type { PagesFunction } from '@cloudflare/workers-types';

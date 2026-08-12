@@ -28,17 +28,6 @@ CLOUDFLARE_EMAIL_TOKEN=
 # a bare jamie@yourdomain.com works too.
 EMAIL_FROM=Church of Jamie <jamie@yourdomain.com>
 
-# ---------------------------------------------------------------- payments (Stripe)
-
-# https://dashboard.stripe.com/test/apikeys — the Secret key. Use the test key (sk_test_...)
-# locally and the live key (sk_live_...) in production.
-STRIPE_SECRET_KEY=sk_test_...
-
-# The signing secret for the webhook endpoint that points at /api/stripe-webhook.
-# Locally: printed by `stripe listen --forward-to localhost:8788/api/stripe-webhook`.
-# In production: https://dashboard.stripe.com/webhooks → your endpoint → Signing secret.
-STRIPE_WEBHOOK_SECRET=whsec_...
-
 # ---------------------------------------------------------------- bot challenge (Turnstile)
 
 # https://dash.cloudflare.com → Turnstile → Add widget. Both keys, or neither: with either one

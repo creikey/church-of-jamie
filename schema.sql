@@ -1,4 +1,4 @@
--- D1 schema for accounts, sign-in codes, sessions, and the payment ledger.
+-- D1 schema for accounts, sign-in codes, sessions, and the limit counters.
 --
 -- Apply it with:
 --   npx wrangler d1 execute church-of-jamie --local --file=./schema.sql   (local dev)
@@ -6,12 +6,12 @@
 --
 -- Every statement is idempotent, so re-running it after a schema change is safe.
 
--- One row per account. `messages_remaining` is the only thing an account actually stores.
+-- One row per account. An account is an address and nothing else: the daily message allowance is
+-- counted per address in `rate_limits`, not stored here.
 CREATE TABLE IF NOT EXISTS users (
-	id                 TEXT PRIMARY KEY,
-	email              TEXT NOT NULL UNIQUE,
-	messages_remaining INTEGER NOT NULL DEFAULT 0,
-	created_at         INTEGER NOT NULL
+	id         TEXT PRIMARY KEY,
+	email      TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL
 );
 
 -- The six-digit code sent to an address, hashed. At most one outstanding code per address:
@@ -33,8 +33,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions (user_id);
 
--- Fixed-window counters behind every abuse limit. `bucket` already encodes the window, so an
--- expired row is simply never read again — `sweepExpired` in server/ratelimit.ts clears them out.
+-- Fixed-window counters behind every abuse limit, and behind the daily message allowance itself.
+-- `bucket` already encodes the window, so an expired row is simply never read again —
+-- `sweepExpired` in server/ratelimit.ts clears them out.
 CREATE TABLE IF NOT EXISTS rate_limits (
 	bucket     TEXT PRIMARY KEY,
 	count      INTEGER NOT NULL,
@@ -43,13 +44,9 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 
 CREATE INDEX IF NOT EXISTS rate_limits_expires_at ON rate_limits (expires_at);
 
--- Payment ledger, keyed by Stripe event id so a redelivered webhook cannot grant twice.
--- Rows outlive the account on purpose: this is the record behind an invoice.
-CREATE TABLE IF NOT EXISTS purchases (
-	stripe_event_id TEXT PRIMARY KEY,
-	user_id         TEXT,
-	amount_cents    INTEGER NOT NULL,
-	messages        INTEGER NOT NULL,
-	invoice_number  TEXT,
-	created_at      INTEGER NOT NULL
-);
+-- Databases created before payments were removed still carry the balance column and the payment
+-- ledger. Neither is read any more, and `CREATE TABLE IF NOT EXISTS` above will not clear them.
+-- Run these once against such a database to be rid of them:
+--
+--   ALTER TABLE users DROP COLUMN messages_remaining;
+--   DROP TABLE IF EXISTS purchases;

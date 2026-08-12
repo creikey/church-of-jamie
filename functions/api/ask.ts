@@ -1,7 +1,7 @@
 /**
  * POST /api/ask — answer a question as Jamie.
  *
- * 0. Require a signed-in account with a message left, and take that message off the balance
+ * 0. Require a signed-in account with a message left in today's allowance, and count that message
  *    before any work is done. Nobody asks anything here anonymously.
  * 1. Embed the question with the same Workers AI model that built the corpus.
  * 2. Cosine-rank every exchange, collapse runs of consecutive Jamie messages into one answer,
@@ -17,6 +17,7 @@ import type { PagesFunction } from '@cloudflare/workers-types';
 import type { AskRequest, ChatMessage } from '../../shared/api';
 import { currentUser, refundMessage, spendMessage } from '../../server/accounts';
 import type { Env } from '../../server/env';
+import { DAILY_MESSAGES } from '../../server/env';
 import { crossOrigin } from '../../server/http';
 
 interface CorpusMeta {
@@ -354,10 +355,10 @@ function sse(payload: unknown): Uint8Array {
 	return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function json(body: unknown, status: number): Response {
+function json(body: unknown, status: number, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { 'content-type': 'application/json; charset=utf-8' },
+		headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
 	});
 }
 
@@ -383,12 +384,21 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 	const question = (body.question ?? '').trim().slice(0, MAX_QUESTION_CHARS);
 	if (!question) return json({ error: 'Ask something first.' }, 400);
 
-	// Pay first. Reading the balance and then decrementing would let two questions sent at once
-	// both see the last message and both spend it.
-	if (!(await spendMessage(env, user.id))) {
-		return json({ error: 'You are out of messages.', outOfMessages: true }, 402);
+	// Count it first. Reading the count and then incrementing would let two questions sent at once
+	// both see the day's last message and both spend it. The allowance is keyed on the address,
+	// not the session, so opening a second browser does not open a second allowance.
+	const spent = await spendMessage(env, user.email);
+	if (!spent.ok) {
+		return json(
+			{
+				error: `That is all ${DAILY_MESSAGES} messages for today. Another ${DAILY_MESSAGES} arrive tomorrow.`,
+				outOfMessages: true,
+			},
+			429,
+			{ 'retry-after': String(spent.retryAfter) },
+		);
 	}
-	const remaining = user.messagesRemaining - 1;
+	const remainingToday = spent.remaining;
 
 	let store: Corpus;
 	let turn: string;
@@ -397,13 +407,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 		const query = await embedQuestion(question, store.meta.model, env);
 		turn = buildQuestionTurn(question, retrieve(store, query, RETRIEVED_EXCHANGES));
 	} catch (error: unknown) {
-		await refundMessage(env, user.id);
+		await refundMessage(env, user.email);
 		return json({ error: error instanceof Error ? error.message : 'Retrieval failed.' }, 500);
 	}
 
 	// The browser is the only thing holding the conversation, so it hands the history back with
 	// every question — which means an attacker holds it too, and can send whatever they like.
-	// Unbounded, one message's worth of balance buys an arbitrarily large prompt. Every turn is
+	// Unbounded, one message of the allowance buys an arbitrarily large prompt. Every turn is
 	// checked for shape and clipped to the same ceiling the question gets.
 	const history: Turn[] = (Array.isArray(body.history) ? body.history : [])
 		.filter(
@@ -426,7 +436,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
 			// Sent before the answer so the counter in the header settles immediately, rather than
 			// after however long the model takes.
-			controller.enqueue(sse({ type: 'balance', remaining }));
+			controller.enqueue(sse({ type: 'balance', remainingToday }));
 
 			const emit = (text: string) => {
 				emitted = true;
@@ -476,11 +486,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 				}
 				controller.enqueue(sse({ type: 'done' }));
 			} catch (error: unknown) {
-				// Nothing was said, so nothing was bought. A stream that broke part-way through still
-				// gave an answer, and that one stays paid for.
+				// Nothing was said, so nothing was spent. A stream that broke part-way through still
+				// gave an answer, and that one stays counted.
 				if (!emitted) {
-					await refundMessage(env, user.id);
-					controller.enqueue(sse({ type: 'balance', remaining: remaining + 1 }));
+					await refundMessage(env, user.email);
+					controller.enqueue(sse({ type: 'balance', remainingToday: remainingToday + 1 }));
 				}
 				controller.enqueue(
 					sse({

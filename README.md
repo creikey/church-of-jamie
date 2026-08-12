@@ -5,8 +5,9 @@ Welcome to the church of Jamie.
 Ask a question about self-realization and get an answer written as Jamie, grounded in his own
 writing and in how he actually answered similar questions in the Discord.
 
-Asking requires an account. Signing in with an email address grants **10 messages**; after that,
-**$5 buys 100 more**. An account holds an email address and a number, and nothing else.
+Asking requires an account. Signing in with an email address gives that address **50 messages a
+day**, free, and the count starts over every day at midnight UTC. An account holds an email
+address and nothing else.
 
 # Technical details
 
@@ -19,8 +20,7 @@ Local dev runs a single origin where `/` is the live-reload site and `/api` is s
 - OpenRouter account (or an Anthropic one, if you switch `MODEL` back to Claude)
 - Cloudflare **Workers Paid** plan ($5/month) — Email Sending requires it, and it lifts the 10 ms
   CPU cap that a cold start can exceed
-- A domain on Cloudflare DNS, for sending the sign-in code and receipt emails
-- Stripe account, for payments
+- A domain on Cloudflare DNS, for sending the sign-in code emails
 - GitHub repository (for CI optional)
 
 > **Setting this up for the first time?** [PRODUCTION_SETUP.md](PRODUCTION_SETUP.md) is the
@@ -59,16 +59,14 @@ Notes
 - `functions/` – Cloudflare Pages Functions, one file per route
   - `functions/api/index.ts` → GET `/api`
   - `functions/api/ask.ts` → POST `/api/ask` — retrieval + the model, streamed back as SSE
-  - `functions/api/me.ts` → GET `/api/me` — the signed-in account, and what a purchase costs
+  - `functions/api/me.ts` → GET `/api/me` — the signed-in account, and how many messages a day
   - `functions/api/auth/request-code.ts` → POST — mail a six-digit sign-in code
   - `functions/api/auth/verify.ts` → POST — trade the code for a session cookie
   - `functions/api/auth/logout.ts` → POST — drop the session
   - `functions/api/account.ts` → DELETE `/api/account` — erase the account
-  - `functions/api/checkout.ts` → POST — open a Stripe Checkout page
-  - `functions/api/stripe-webhook.ts` → POST — the only place a balance goes up
-- `server/` – Worker-side modules the routes share: `accounts.ts` (sessions, codes, balances),
-  `stripe.ts`, `email.ts`, `turnstile.ts`, `ratelimit.ts`, and `env.ts` (every binding and secret,
-  plus the pricing and abuse-limit constants)
+- `server/` – Worker-side modules the routes share: `accounts.ts` (sessions, codes, the daily
+  allowance), `email.ts`, `turnstile.ts`, `ratelimit.ts`, and `env.ts` (every binding and secret,
+  plus `DAILY_MESSAGES` and the abuse-limit constants)
 - `shared/` – Shared TypeScript types used by both client and worker
 - `schema.sql` – The D1 tables
 - `tools/` – Offline scripts: `convert.ts` (Discord export → `converted.json`) and `embed.ts`
@@ -84,7 +82,7 @@ Four things have to happen once: get the keys, create the database, build the co
 
 **Every secret, in one list.** Each one is explained below. All of them go in `.dev.vars` for
 local development (copy `.dev.vars.example`; `.dev.vars` is gitignored) and are set again as Pages
-secrets for production in step 6.
+secrets for production in step 5.
 
 | Secret | Where it comes from | Needed for |
 |---|---|---|
@@ -92,10 +90,8 @@ secrets for production in step 6.
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | answering questions, only if `MODEL` is a Claude model |
 | `CLOUDFLARE_ACCOUNT_ID` | `npx wrangler whoami` | embeddings |
 | `CLOUDFLARE_AI_TOKEN` | Cloudflare API token, Workers AI · Read | embeddings |
-| `CLOUDFLARE_EMAIL_TOKEN` | API token, Account · Email Sending · Edit | sign-in codes and receipts |
-| `EMAIL_FROM` | your verified sending address | sign-in codes and receipts |
-| `STRIPE_SECRET_KEY` | https://dashboard.stripe.com/apikeys | payments |
-| `STRIPE_WEBHOOK_SECRET` | the webhook endpoint you create in step 3 | payments |
+| `CLOUDFLARE_EMAIL_TOKEN` | API token, Account · Email Sending · Edit | sign-in codes |
+| `EMAIL_FROM` | your verified sending address | sign-in codes |
 | `TURNSTILE_SITE_KEY` | Cloudflare dashboard → Turnstile | keeping the sign-in form off bots |
 | `TURNSTILE_SECRET_KEY` | same widget | keeping the sign-in form off bots |
 
@@ -145,10 +141,9 @@ npx wrangler whoami    # prints your account ID
 
 → `CLOUDFLARE_ACCOUNT_ID=...`
 
-### Cloudflare Email Sending — this is what sends the sign-in codes and receipts
+### Cloudflare Email Sending — this is what sends the sign-in codes
 
-Both emails are plain text: the six digits someone types in to sign in, and the receipt after a
-purchase, which links to the Stripe invoice when there is one.
+There is one email and it is plain text: the six digits someone types in to sign in.
 
 Sending goes through **Cloudflare Email Service**, over its REST API rather than the `send_email`
 Worker binding. Two reasons, and both are hard blockers rather than preferences: Pages Functions
@@ -177,29 +172,6 @@ wire it into anything.
 
 Swapping to another provider is one file: `server/email.ts` exposes `sendEmail`, and nothing else
 knows how mail is sent.
-
-### Stripe secret key — this is what takes the money
-
-1. Sign up at https://dashboard.stripe.com.
-2. **Developers → API keys**. There are two modes, toggled top-right:
-   - **Test mode** gives `sk_test_...`. Use this locally. Card `4242 4242 4242 4242`, any future
-     expiry, any CVC, pays without charging anything.
-   - **Live mode** gives `sk_live_...`, and needs the business details Stripe asks for during
-     activation before it will work. Use this in production.
-3. Reveal and copy the **Secret key** → `STRIPE_SECRET_KEY=sk_test_...`
-
-There is nothing to create in the Stripe dashboard beyond this — no Product, no Price. The
-checkout page is built from the constants in `server/env.ts`:
-
-```ts
-export const FREE_MESSAGES = 10;
-export const MESSAGES_PER_PURCHASE = 100;
-export const PURCHASE_PRICE_CENTS = 500;
-```
-
-Changing what a sign-in grants, or what $5 buys, is a change to those three lines.
-
-`STRIPE_WEBHOOK_SECRET` comes from step 3, once there is an endpoint to point at.
 
 ### Turnstile keys — this is what keeps the sign-in form off bots
 
@@ -247,7 +219,8 @@ OpenRouter's OpenAI-compatible endpoint, `provider: 'anthropic'` uses the Anthro
 
 ## 2. Create the database
 
-Accounts, sessions and the payment ledger live in Cloudflare D1. `schema.sql` has the tables.
+Accounts, sessions, sign-in codes and the limit counters live in Cloudflare D1. `schema.sql` has
+the tables.
 
 ```bash
 npx wrangler login                        # opens a browser, one time
@@ -276,41 +249,10 @@ database is a sqlite file under `.wrangler/` and has nothing to do with the remo
 To look inside later:
 
 ```bash
-npx wrangler d1 execute church-of-jamie --remote --command "SELECT email, messages_remaining FROM users"
+npx wrangler d1 execute church-of-jamie --remote --command "SELECT email, created_at FROM users"
 ```
 
-## 3. Point Stripe at the webhook
-
-**This is the step that actually gives someone their messages.** Nothing is granted when the
-browser comes back from Checkout — that proves nothing. The balance moves only when Stripe calls
-`/api/stripe-webhook`, and that callback is verified against `STRIPE_WEBHOOK_SECRET`. Without
-this step, people can pay and get nothing.
-
-### Locally
-
-```bash
-brew install stripe/stripe-cli/stripe        # or see https://docs.stripe.com/stripe-cli
-stripe login
-stripe listen --forward-to localhost:8788/api/stripe-webhook
-```
-
-`stripe listen` prints `Your webhook signing secret is whsec_...`. Put that in `.dev.vars` as
-`STRIPE_WEBHOOK_SECRET` and restart `npm run dev`. Leave `stripe listen` running while you test.
-
-### In production
-
-1. https://dashboard.stripe.com/webhooks → **Add endpoint**
-2. Endpoint URL: `https://your-domain.example/api/stripe-webhook`
-3. Events to send: **`checkout.session.completed`** — that one, nothing else
-4. Add endpoint, then **Reveal** the **Signing secret** → `STRIPE_WEBHOOK_SECRET=whsec_...`
-
-Do this once in test mode and again in live mode; they are separate endpoints with separate
-secrets, and the live secret is the one that belongs with `sk_live_...`.
-
-Redeliveries are expected and harmless: the event id is the primary key of the `purchases` table,
-so a repeated delivery is recorded as already applied and grants nothing a second time.
-
-## 4. Build the corpus
+## 3. Build the corpus
 
 ```bash
 npm run convert -- /path/to/discord-export-folder    # → converted.json
@@ -329,28 +271,29 @@ export $(grep -v '^#' .dev.vars | xargs) && npm run embed
 Use `npm run embed -- --dry-run` to see what would be embedded without spending Workers AI
 neurons. Re-run `embed` whenever `converted.json` or the philosophy text changes.
 
-## 5. Try it locally
+## 4. Try it locally
 
 ```bash
-npm run dev                                                # terminal 1
-stripe listen --forward-to localhost:8788/api/stripe-webhook   # terminal 2
+npm run dev
 ```
 
 Open http://localhost:8788. The whole path, end to end:
 
-1. Enter your email, click **Send code**. The code arrives by mail; type it in. You are signed in
-   with 10 messages.
-2. Ask something. The counter drops to 9. The first question is slow (the worker pulls the corpus
+1. Enter your email, click **Send code**. The code arrives by mail; type it in. You are signed in,
+   with 50 of 50 messages left today.
+2. Ask something. The counter drops to 49. The first question is slow (the worker pulls the corpus
    into memory); after that it is fast for as long as the isolate lives.
-3. Click **Buy 100 · $5.00**, pay with `4242 4242 4242 4242`, any future expiry, any CVC.
-4. You land back on the site, it waits for the webhook, and the counter jumps to 109. A receipt
-   arrives with a link to the Stripe invoice.
-5. **Delete** → **Delete forever** erases the account.
+3. **Delete** → **Delete forever** erases the account. Signing up again with the same address does
+   not start the day over — the allowance is counted per address, not per account.
 
-If the counter does not move after paying, `stripe listen` is the first place to look — it prints
-every forwarded event and the status it got back.
+To watch the allowance itself, it is one row in D1:
 
-## 6. Deploy
+```bash
+npx wrangler d1 execute church-of-jamie --local --command \
+  "SELECT bucket, count FROM rate_limits WHERE bucket LIKE 'messages-email-d:%'"
+```
+
+## 5. Deploy
 
 ```bash
 npx wrangler pages project create church-of-jamie --production-branch main   # first time only
@@ -366,14 +309,11 @@ npx wrangler pages secret put CLOUDFLARE_ACCOUNT_ID --project-name church-of-jam
 npx wrangler pages secret put CLOUDFLARE_AI_TOKEN --project-name church-of-jamie
 npx wrangler pages secret put CLOUDFLARE_EMAIL_TOKEN --project-name church-of-jamie
 npx wrangler pages secret put EMAIL_FROM --project-name church-of-jamie
-npx wrangler pages secret put STRIPE_SECRET_KEY --project-name church-of-jamie
-npx wrangler pages secret put STRIPE_WEBHOOK_SECRET --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SITE_KEY --project-name church-of-jamie
 npx wrangler pages secret put TURNSTILE_SECRET_KEY --project-name church-of-jamie
 ```
 
-(Use `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` if `MODEL` points at a Claude model. Use
-the `sk_live_...` key and the *live* webhook's signing secret here, not the test ones.)
+(Use `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` if `MODEL` points at a Claude model.)
 
 Each command prompts for the value and stores it encrypted. Do this once; redeploys keep them.
 
@@ -389,17 +329,15 @@ separate step for the API.
 
 - **Check `curl https://your-domain/api/me` reports a non-null `turnstileSiteKey`.** If it is
   null, the challenge is off and the sign-in form is open to scripts.
-- Set the webhook endpoint URL in Stripe to the real domain (step 3), not a preview URL.
 - Add the real hostname to the Turnstile widget's allowed hostnames, or the widget will not render
   there.
 - Send yourself a code on the live site to confirm mail is delivering from the onboarded domain.
-- Buy once with a real card to confirm the live keys work end to end. Refund it from the Stripe
-  dashboard afterwards if you like — note that a refund does **not** take the messages back; that
-  is not wired up.
+- Ask one question to confirm the model key works, and check the counter in the header drops to
+  49 of 50.
 
 ---
 
-# Accounts and payments
+# Accounts and the daily allowance
 
 ## How signing in works
 
@@ -409,7 +347,9 @@ There is no password and no sign-up form. Both are the same flow:
    address, and mails the plaintext once. One outstanding code per address — asking again replaces
    the old one, which is what invalidates it.
 2. `POST /api/auth/verify` compares hashes. On a match the code row is deleted, the account is
-   created if it did not exist (with `FREE_MESSAGES` on it), and a session cookie is set.
+   created if it did not exist, and a session cookie is set. Nothing is granted with it — the
+   allowance belongs to the address, not to the account, and it is the same fifty a day either
+   way.
 
 Codes last 10 minutes and die after 5 wrong guesses. A Turnstile challenge, and a stack of rate
 limits, sit in front of step 1 — see *Abuse and rate limiting* below, which is where the reasoning
@@ -422,65 +362,37 @@ hash is stored, so a leaked copy of the `sessions` table cannot be used to sign 
 
 ## How a message gets spent
 
-`/api/ask` refuses anyone without a session (401). With one, it decrements before doing any work:
+Every address gets `DAILY_MESSAGES` messages a day — **50**, set in `server/env.ts`. Nothing is
+stored per account to make that work. The allowance is counted by the same fixed-window counter as
+every abuse limit, in one row of `rate_limits` keyed on the address and the day:
 
 ```sql
-UPDATE users SET messages_remaining = messages_remaining - 1 WHERE id = ? AND messages_remaining > 0
+INSERT INTO rate_limits (bucket, count, expires_at) VALUES ('messages-email-d:you@example.com:20353', 1, ?)
+ON CONFLICT(bucket) DO UPDATE SET count = count + 1
+RETURNING count
 ```
 
-Zero rows changed means the balance was empty, and the request is refused with 402. Doing it in
-one conditional statement is what stops two questions sent at the same moment from both seeing the
-last message and both spending it. If the answer then fails before a single word is emitted, the
-message is put back; a stream that breaks part-way through stays paid for, because an answer was
-given. The new balance is streamed to the browser as a `balance` event ahead of the text, so the
-counter in the header settles immediately rather than after the model finishes.
+`/api/ask` refuses anyone without a session (401). With one, it spends before doing any work: a
+count back over 50 means the day is used up, and the request is refused with **429** and a
+`Retry-After` naming the seconds until midnight UTC. Incrementing and reading in one statement is
+what stops two questions sent at the same moment from both seeing the day's last message and both
+spending it. If the answer then fails before a single word is emitted, the message is put back; a
+stream that breaks part-way through stays spent, because an answer was given. What is left is
+streamed to the browser as a `balance` event ahead of the text, so the counter in the header
+settles immediately rather than after the model finishes.
 
-## How a purchase works
+Two consequences worth knowing, both deliberate:
 
-`POST /api/checkout` opens a Stripe Checkout Session carrying the account id in
-`client_reference_id` and `metadata.user_id`, and returns its URL for the browser to follow.
-
-Nothing is granted there. Coming back to `success_url` proves nothing, so the site simply polls
-`/api/me` until the number goes up. The grant happens in `/api/stripe-webhook`, which:
-
-1. verifies the `Stripe-Signature` HMAC against the raw request bytes and rejects anything signed
-   more than five minutes ago, so a captured callback cannot be replayed;
-2. inserts the event id into `purchases` — losing that insert means this is a redelivery, and it
-   stops there;
-3. adds the messages, then mails a plain-text receipt, linking to the invoice when there is one.
-
-A receipt that fails to send is logged and swallowed. The messages are already on the account, and
-asking Stripe to retry would only re-run a grant that has happened. The invoice lookup is
-best-effort for the same reason: money has changed hands, so a receipt goes out whether or not the
-invoice can be read.
-
-### Managed Payments
-
-Stripe enables **Managed Payments** on new accounts by default, and this integration assumes it.
-Under it Stripe is the merchant of record — it registers for and remits VAT and sales tax in 75+
-countries, fights disputes, and owns everything after the sale, including the invoice and its own
-confirmation email. It costs
-[3.5% on top of standard processing](https://support.stripe.com/questions/managed-payments-pricing),
-so a $5 sale pays 6.4% + 30¢ rather than 2.9% + 30¢ — about 18¢ more.
-
-That is why `createCheckoutSession` sends no `invoice_creation`: with Managed Payments on, Stripe
-rejects it outright, because it is asking to do a job Stripe has taken. Invoices still exist; they
-are just Stripe's to make.
-
-To go the other way — keep the 18¢, take on the tax registration yourself — turn Managed Payments
-off under **Settings → Payments** in the dashboard (or pass `managed_payments[enabled]: 'false'` on
-that call) and add `'invoice_creation[enabled]': 'true'` back in `server/stripe.ts`.
-
-Buyers get two emails either way: Stripe's confirmation and ours. Stripe's can be turned off under
-**Settings → Customer emails**.
-
-Refunds are not wired up: refunding in the Stripe dashboard returns the money and leaves the
-messages on the account.
+- **The window is fixed, not rolling.** It resets at midnight UTC, so somebody who spends all
+  fifty at 23:59 has fifty more a minute later. That is the coarseness the whole limiter is built
+  on, and it costs at most one extra day.
+- **The key is the address, not the account.** Signing out, signing in on another device, or
+  deleting the account and signing up again all land in the same day's bucket.
 
 ## Abuse and rate limiting
 
 Three things here cost real money or real goodwill, so those are what is defended: **sending mail
-to strangers**, **giving away free messages**, and **model calls**. Everything else follows from
+to strangers**, **giving away model time**, and **model calls**. Everything else follows from
 those.
 
 ### The mail cannon
@@ -506,15 +418,15 @@ for what these defend.
 | Cooldown between codes | 45 seconds | double-clicking the button |
 | Guesses per code | 5, then the code dies | brute-forcing one code |
 | Verify attempts per IP | 20 / hour | brute-forcing across many addresses |
-| New accounts per IP | 5 / day | farming free messages |
-| Checkout pages per IP | 20 / hour | noise |
+| New accounts per IP | 5 / day | farming daily allowances |
+| Messages per address | 50 / day | one address running up the model bill |
 
 ### What a six-digit code is actually worth
 
 The code limits and the five-guess cap together cap an attacker at 15 codes × 5 guesses = **75
 attempts a day** against one address, out of a million. That is roughly a **2.7% chance over a
 year** of continuous attack — during which the victim is receiving fifteen unexplained sign-in
-emails a day, every day, and the prize is an account holding ten messages.
+emails a day, every day, and the prize is an account with fifty messages a day on it.
 
 That is the trade a six-digit code makes, and it is the right one here. If you want it gone,
 change the code length in `issueLoginCode` (`server/accounts.ts`) to eight digits and the odds
@@ -522,19 +434,18 @@ drop by a factor of a hundred, at the cost of two more keystrokes.
 
 ### The rest of it
 
-- **Free messages are the real spend.** Every new account is `FREE_MESSAGES` × ~$0.04 given away.
-  Turnstile plus 5 signups per IP per day is what stands between a script and the bill. If it ever
-  gets abused anyway, lowering `FREE_MESSAGES` is the lever.
-- **Paid messages need no limit.** They cost money to obtain, which is the limit.
+- **Model time is the whole spend.** Nothing is charged for, so every message is given away. One
+  address costs at most `DAILY_MESSAGES` × ~$0.04 a day — about **$2**, every day, forever. That
+  number times the number of addresses a script can create is the bill, which is why Turnstile and
+  5 signups per IP per day matter more here than anywhere else in this file. `DAILY_MESSAGES` in
+  `server/env.ts` is the lever if it ever gets abused.
 - **History is clipped.** The browser holds the conversation and hands it back with every
   question, so an attacker controls it too. Each turn is checked for shape and clipped to
-  `MAX_QUESTION_CHARS`, and only the last `MAX_HISTORY_MESSAGES` are kept — otherwise one
-  message's worth of balance buys an arbitrarily large prompt.
+  `MAX_QUESTION_CHARS`, and only the last `MAX_HISTORY_MESSAGES` are kept — otherwise one message
+  of the allowance buys an arbitrarily large prompt.
 - **Cross-origin writes are refused.** The session cookie is `SameSite=Lax`, which is what
   actually stops another site from riding it; every state-changing endpoint also checks `Origin`
   as a second lock.
-- **The webhook is the exception**, since Stripe sends no `Origin`. It is protected by the
-  signature instead, and refuses a body over 256 KB before computing the HMAC over it.
 - **Codes and sessions are stored hashed**, so a leaked copy of either table is not usable.
 - **`/api/auth/request-code` answers identically** whether or not the address has an account, so
   it cannot be used to find out who has one.
@@ -546,21 +457,20 @@ drop by a factor of a hundred, at the cost of two more keystrokes.
 - **A distributed attacker with many IPs** gets a proportional multiple of the per-IP limits. Add
   a Cloudflare WAF rate-limiting rule on `/api/auth/*` if that ever shows up; it acts at the edge,
   before any of this code runs.
-- **Disposable-address services** work fine for collecting free messages. Blocking them is an
-  arms race that is not worth entering at ten messages a head.
-- **Refunds do not claw back messages.** Someone can pay, use the messages, and charge back.
-  Stripe Radar is the place to deal with that if it happens.
+- **Disposable-address services** work fine for collecting allowances, and here each one is worth
+  fifty messages a day rather than ten once. Blocking them is an arms race; the per-IP signup
+  limit and Turnstile are what actually bound it, so watch that number rather than the domains.
 
 ## What an account stores
 
-An id, an email address, a number, and a creation timestamp. That is the whole of the `users`
-table. There is no history, no profile, and the conversation itself never leaves `localStorage` in
-the browser.
+An id, an email address, and a creation timestamp. That is the whole of the `users` table — there
+is not even a balance on it. There is no history, no profile, and the conversation itself never
+leaves `localStorage` in the browser.
 
 `DELETE /api/account` erases the user row, every session, and any outstanding sign-in code, and
-clears the cookie. Rows in `purchases` stay, with `user_id` set to NULL — they are the record
-behind an invoice, and Stripe holds the same payments regardless, but they no longer point at
-anybody. Any remaining messages are forfeited, which the confirmation says before you click it.
+clears the cookie. Today's count in `rate_limits` is deliberately left alone, since it is keyed on
+the address: deleting and signing up again is not a way to start the day over, which the
+confirmation says before you click it. That row ages out on its own at midnight.
 
 ## Running costs
 
@@ -573,22 +483,22 @@ effectively free at this volume. Cloudflare's free plan caps Pages Functions CPU
 request after a cold start can exceed; the $5 Workers Paid plan removes that limit — and is
 required anyway, since Email Sending only runs on it.
 
-So $5 for 100 messages is roughly **$4 of model cost** at the Inkling price. What is left after
-Stripe depends on whether Managed Payments is on:
+Nothing is charged for, so all of that is spend. What one address can cost, if it spends all
+fifty of its messages every day:
 
-| | Stripe takes | You net | Margin over $4 of model cost |
+| | Per question | One address, per day | 100 such addresses, per day |
 |---|---|---|---|
-| Managed Payments on (the default, and what this is built for) | 6.4% + 30¢ | $4.38 | **38¢** |
-| Managed Payments off | 2.9% + 30¢ | $4.56 | **56¢** |
+| OpenRouter (the default) | ~$0.04 | **~$2** | ~$200 |
+| Claude Opus 5, cache warm | ~$0.09 | **~$4.50** | ~$450 |
 
-Either way it is close to break-even, and it is underwater on Claude Opus — one Opus answer costs
-more than a hundredth of the pack. The three numbers that fix that are `PURCHASE_PRICE_CENTS`,
-`MESSAGES_PER_PURCHASE` and `FREE_MESSAGES` in `server/env.ts`; raising the price or cutting the
-free allowance moves the margin far more than the 18¢ Managed Payments costs.
+Most accounts will not come close to fifty a day, but the ceiling is what a script would aim for,
+and it is the number to size the budget against. `DAILY_MESSAGES` in `server/env.ts` is the only
+line that moves it — halving it halves the worst case, for everyone, immediately. A cheaper
+`MODEL` is the other lever, and it moves the per-question figure instead.
 
 D1 and email are effectively free at this scale: D1's free tier covers 5M row reads a day, and the
-Workers Paid plan includes 3,000 emails a month (then $0.35 per 1,000) — at roughly two emails per
-paying customer, that is a lot of customers.
+Workers Paid plan includes 3,000 emails a month (then $0.35 per 1,000) — at one email per sign-in,
+and a session lasting 90 days, that is a lot of people.
 
 ## A note on what is public
 
@@ -655,7 +565,8 @@ Writes into `public/corpus/`:
 
 ## How `/api/ask` answers
 
-0. Requires a session and takes one message off the balance — see *Accounts and payments* above.
+0. Requires a session and counts one message against today's allowance for that address — see
+   *Accounts and the daily allowance* above.
 1. Embeds the question with the model recorded in `meta.json` (so query and corpus can never drift
    apart).
 2. Cosine-ranks every exchange, collapses groups, keeps the top 10.

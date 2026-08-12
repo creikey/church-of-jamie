@@ -1,10 +1,10 @@
 /**
  * POST /api/auth/verify — trade a mailed code for a session.
  *
- * This is also where an account comes into existence: a first correct code creates it with its
- * free messages. There is no separate sign-up — which is why creating one is rate-limited per IP.
- * Every new account is `FREE_MESSAGES` of model time given away, so a script that can make
- * thousands of them is a bill, not a nuisance.
+ * This is also where an account comes into existence: a first correct code creates it. There is
+ * no separate sign-up — which is why creating one is rate-limited per IP. Every new account is
+ * `DAILY_MESSAGES` of model time a day, so a script that can make thousands of them is a bill,
+ * not a nuisance.
  *
  * Guessing is bounded twice over: five wrong guesses burn the code (in `redeemLoginCode`), and an
  * IP only gets so many attempts an hour across every address it tries.
@@ -16,6 +16,7 @@ import {
 	createSession,
 	createUser,
 	findUserByEmail,
+	messagesLeftToday,
 	redeemLoginCode,
 	sessionCookie,
 } from '../../../server/accounts';
@@ -63,7 +64,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 	const token = await createSession(env, user.id);
 
 	const response: VerifyCodeResponse = {
-		account: { email: user.email, messagesRemaining: user.messagesRemaining },
+		account: {
+			email: user.email,
+			messagesRemainingToday: await messagesLeftToday(env, user.email),
+		},
 		created,
 	};
 	return json(response, 200, { 'set-cookie': sessionCookie(token, request.url) });

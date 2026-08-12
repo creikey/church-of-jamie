@@ -6,8 +6,8 @@ import { Halo } from './Halo.tsx'
 
 const STORAGE_KEY = 'church-of-jamie:conversation'
 
-/** Until `/api/me` answers, the price is unknown; this is only what the button says meanwhile. */
-const DEFAULT_PRICING = { messages: 100, priceCents: 500 }
+/** Until `/api/me` answers, the allowance is unknown; this is only what the copy says meanwhile. */
+const DEFAULT_DAILY_MESSAGES = 50
 
 function loadConversation(): ChatMessage[] {
   try {
@@ -54,8 +54,6 @@ async function* readEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Ask
   }
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(loadConversation)
   const [draft, setDraft] = useState('')
@@ -64,7 +62,7 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [asking, setAsking] = useState(false)
   const [account, setAccount] = useState<Account | null>(null)
-  const [pricing, setPricing] = useState(DEFAULT_PRICING)
+  const [dailyMessages, setDailyMessages] = useState(DEFAULT_DAILY_MESSAGES)
   const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -79,41 +77,20 @@ function App() {
     if (!response.ok) return null
     const body = (await response.json()) as MeResponse
     setAccount(body.account)
-    setPricing(body.pricing)
+    setDailyMessages(body.dailyMessages)
     setTurnstileSiteKey(body.turnstileSiteKey)
     return body.account
   }, [])
 
-  // Who is signed in, plus the return trip from Stripe. Checkout redirects back the moment the
-  // card clears, which can be a beat before the webhook that actually moves the balance — so
-  // after paying, keep asking until the number goes up rather than showing a stale one.
+  // Who is signed in, and how much of today's allowance they have left.
   useEffect(() => {
-    const paid = new URLSearchParams(window.location.search).get('paid') === '1'
-
     void (async () => {
-      let current: Account | null = null
       try {
-        current = await loadAccount()
+        await loadAccount()
       } catch {
         // Nothing to say yet — the sign-in panel is the right thing to show either way.
       }
       setReady(true)
-
-      if (!paid) return
-
-      window.history.replaceState(null, '', window.location.pathname)
-      setNotice('Payment received. Adding your messages…')
-
-      const before = current?.messagesRemaining ?? 0
-      for (let attempt = 0; attempt < 12; attempt++) {
-        await sleep(1500)
-        const refreshed = await loadAccount().catch(() => null)
-        if (refreshed && refreshed.messagesRemaining > before) {
-          setNotice(`Thank you. ${refreshed.messagesRemaining} messages are yours, and a receipt is on its way.`)
-          return
-        }
-      }
-      setNotice('Payment received. The messages will appear here shortly — a receipt is on its way.')
     })()
   }, [loadAccount])
 
@@ -154,9 +131,9 @@ function App() {
 
       if (!response.ok || !response.body) {
         // 401 means the session went away underneath us; drop back to the sign-in panel rather
-        // than leaving a composer that cannot work.
+        // than leaving a composer that cannot work. 429 is the day's allowance, already spent.
         if (response.status === 401) setAccount(null)
-        if (response.status === 402) setAccount({ ...account, messagesRemaining: 0 })
+        if (response.status === 429) setAccount({ ...account, messagesRemainingToday: 0 })
 
         const detail: unknown = await response.json().catch(() => null)
         const message =
@@ -171,7 +148,9 @@ function App() {
           spoken += event.text
           setAnswer(spoken)
         } else if (event.type === 'balance') {
-          setAccount((current) => (current ? { ...current, messagesRemaining: event.remaining } : current))
+          setAccount((current) =>
+            current ? { ...current, messagesRemainingToday: event.remainingToday } : current,
+          )
         } else if (event.type === 'error') {
           throw new Error(event.message)
         }
@@ -199,7 +178,7 @@ function App() {
     inputRef.current?.focus()
   }
 
-  const outOfMessages = account !== null && account.messagesRemaining <= 0
+  const outOfMessages = account !== null && account.messagesRemainingToday <= 0
 
   return (
     <div className="nave relative flex min-h-full flex-col">
@@ -221,7 +200,7 @@ function App() {
         {account && (
           <AccountBar
             account={account}
-            pricing={pricing}
+            dailyMessages={dailyMessages}
             onSignedOut={() => {
               setAccount(null)
               setNotice(null)
@@ -268,14 +247,15 @@ function App() {
         <footer className="sticky bottom-0 mt-8 bg-void/85 pt-4 pb-3 backdrop-blur-sm">
           {!ready ? null : !account ? (
             <SignIn
+              dailyMessages={dailyMessages}
               turnstileSiteKey={turnstileSiteKey}
               onSignedIn={(signedIn, created) => {
                 setAccount(signedIn)
                 setError(null)
                 setNotice(
                   created
-                    ? `Welcome. ${signedIn.messagesRemaining} messages are yours.`
-                    : `Welcome back. ${signedIn.messagesRemaining} messages remaining.`,
+                    ? `Welcome. ${signedIn.messagesRemainingToday} messages a day are yours.`
+                    : `Welcome back. ${signedIn.messagesRemainingToday} messages left today.`,
                 )
                 requestAnimationFrame(() => inputRef.current?.focus())
               }}
@@ -288,7 +268,9 @@ function App() {
                 rows={2}
                 disabled={asking || outOfMessages}
                 placeholder={
-                  outOfMessages ? 'No messages left — buy more above.' : 'Who is it that is asking?'
+                  outOfMessages
+                    ? `That is today's ${dailyMessages} messages. Come back tomorrow.`
+                    : 'Who is it that is asking?'
                 }
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {

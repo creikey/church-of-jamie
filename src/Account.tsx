@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type {
-  Account,
-  CheckoutResponse,
-  RequestCodeResponse,
-  VerifyCodeResponse,
-} from '../shared/api'
+import type { Account, RequestCodeResponse, VerifyCodeResponse } from '../shared/api'
 import { Turnstile } from './Turnstile.tsx'
 
 /** Pulls the `error` field out of a failed endpoint, falling back to the status. */
@@ -33,9 +28,11 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
  * separate sign-up — the first correct code is what brings an account into existence.
  */
 export function SignIn({
+  dailyMessages,
   turnstileSiteKey,
   onSignedIn,
 }: {
+  dailyMessages: number
   turnstileSiteKey: string | null
   onSignedIn: (account: Account, created: boolean) => void
 }) {
@@ -95,7 +92,8 @@ export function SignIn({
       {sentTo === null ? (
         <>
           <p className="text-sm leading-relaxed text-muted">
-            Leave your address to ask a question. The first time, ten messages are yours.
+            Leave your address to ask a question. Every address gets {dailyMessages} messages a day,
+            free.
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <input
@@ -194,31 +192,17 @@ export function SignIn({
 
 export function AccountBar({
   account,
-  pricing,
+  dailyMessages,
   onSignedOut,
   onError,
 }: {
   account: Account
-  pricing: { messages: number; priceCents: number }
+  dailyMessages: number
   onSignedOut: () => void
   onError: (message: string) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-
-  const price = `$${(pricing.priceCents / 100).toFixed(2)}`
-
-  const buy = async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      const { url } = await post<CheckoutResponse>('/api/checkout')
-      window.location.href = url
-    } catch (thrown: unknown) {
-      onError(thrown instanceof Error ? thrown.message : 'Could not open checkout.')
-      setBusy(false)
-    }
-  }
 
   const signOut = async () => {
     if (busy) return
@@ -254,20 +238,12 @@ export function AccountBar({
         <span className="text-muted">
           {account.email}
           <span className="text-gild-dim"> · </span>
-          <span className={account.messagesRemaining > 0 ? 'text-gild' : 'text-red-300/80'}>
-            {account.messagesRemaining} left
+          <span className={account.messagesRemainingToday > 0 ? 'text-gild' : 'text-red-300/80'}>
+            {account.messagesRemainingToday} of {dailyMessages} left today
           </span>
         </span>
 
         <span className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => void buy()}
-            disabled={busy}
-            className="tracking-[0.24em] text-gild transition hover:text-vellum disabled:opacity-40"
-          >
-            Buy {pricing.messages} · {price}
-          </button>
           <button
             type="button"
             onClick={() => void signOut()}
@@ -290,8 +266,8 @@ export function AccountBar({
       {confirmingDelete && (
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded border border-red-400/25 px-3 py-2">
           <span className="w-full text-muted normal-case tracking-normal">
-            Deleting erases the account and forfeits {account.messagesRemaining} remaining message
-            {account.messagesRemaining === 1 ? '' : 's'}. Past payments stay on record with Stripe.
+            Deleting erases the account. Whatever you have used of today's {dailyMessages} messages
+            stays used — signing up again with this address does not start the day over.
           </span>
           <button
             type="button"

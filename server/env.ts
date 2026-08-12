@@ -9,7 +9,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 
 export interface Env {
-	/** D1 database holding accounts, sessions and the payment ledger. See `schema.sql`. */
+	/** D1 database holding accounts, sessions, sign-in codes and the limit counters. See `schema.sql`. */
 	DB: D1Database;
 
 	// --- answering the question
@@ -23,11 +23,6 @@ export interface Env {
 	CLOUDFLARE_EMAIL_TOKEN: string;
 	/** Who mail comes from, e.g. `Church of Jamie <jamie@example.com>`. Must be an onboarded domain. */
 	EMAIL_FROM: string;
-
-	// --- payments (Stripe)
-	STRIPE_SECRET_KEY: string;
-	/** `whsec_...` from the webhook endpoint, used to verify that a callback really is Stripe. */
-	STRIPE_WEBHOOK_SECRET: string;
 
 	// --- bot challenge (Turnstile). Optional: absent means the challenge is not shown or checked.
 	/** Public, and handed to the browser by `/api/me`. Could equally be a plain var. */
@@ -44,32 +39,25 @@ export interface Env {
 	};
 }
 
-/** Messages granted the first time an address signs in. */
-export const FREE_MESSAGES = 10;
-
-/** What $5 buys. */
-export const MESSAGES_PER_PURCHASE = 100;
-
-/** Price of one purchase, in cents. */
-export const PURCHASE_PRICE_CENTS = 500;
-
-/**
- * What tax authorities think is being sold, in Stripe's classification.
- *
- * `txcd_10105001` is "Artificial Intelligence as a Service — Cloud Based — Personal Use", which
- * Stripe defines as access to AI tools such as chatbots, hosted entirely on the provider's servers
- * and reached through a browser, bought for personal rather than business use. That is this
- * product, said back exactly.
- *
- * Managed Payments will not open a Checkout Session without one, because Stripe is the merchant of
- * record and this is what it computes VAT and sales tax from. Changing what is sold here means
- * changing this too — the full list is at https://docs.stripe.com/tax/tax-codes, and picking the
- * right one is a tax question rather than a programming one.
- */
-export const PRODUCT_TAX_CODE = 'txcd_10105001';
-
 const HOUR = 60 * 60;
 const DAY = 24 * HOUR;
+
+/**
+ * How many questions one address may ask in a day.
+ *
+ * There is nothing to buy here and no balance to carry: an account is an address, and the address
+ * gets this many messages every day. Nothing is stored per account to make that work — the
+ * allowance is counted by the same fixed-window counter as every other limit below, keyed on the
+ * address, so signing out, signing back in, or deleting the account and starting again all land
+ * in the same bucket.
+ *
+ * The window is a fixed 24 hours aligned to midnight UTC, not a rolling one. Somebody who spends
+ * all fifty just before midnight has fifty more a minute later; that is the coarseness the whole
+ * limiter is built on, and it costs at most one extra day's worth of model time.
+ *
+ * This number is the model bill. Changing it changes what one address can cost.
+ */
+export const DAILY_MESSAGES = 50;
 
 /**
  * Every abuse limit, in one table.
@@ -90,12 +78,12 @@ export const LIMITS = {
 	/** Codes one IP may guess at, across every address. */
 	verifyAttemptsPerIp: { limit: 20, windowSeconds: HOUR },
 	/**
-	 * New accounts one IP may create in a day. Each one is `FREE_MESSAGES` of model time given
-	 * away, so this is the limit standing between a script and the bill.
+	 * New accounts one IP may create in a day. Every account is `DAILY_MESSAGES` of model time a
+	 * day, for as long as it is used, so this is the limit standing between a script and the bill.
 	 */
 	signupsPerIpDay: { limit: 5, windowSeconds: DAY },
-	/** Checkout pages one IP may open. Stripe meters its own API; this just keeps the noise down. */
-	checkoutsPerIpHour: { limit: 20, windowSeconds: HOUR },
+	/** The daily allowance itself. Keyed on the address — see `DAILY_MESSAGES`. */
+	messagesPerEmailDay: { limit: DAILY_MESSAGES, windowSeconds: DAY },
 } as const;
 
 /** Throws a readable error naming what is missing, rather than failing somewhere deeper. */

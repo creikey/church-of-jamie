@@ -6,10 +6,9 @@
  * verified as Email Routing destinations — useless for mailing a sign-in code to someone who has
  * just typed their address in for the first time. A token and a fetch reach any recipient.
  *
- * Everything here is `text/plain` on purpose. There are exactly two messages — a sign-in code and
- * a receipt — and both are things people forward to an accountant or keep for their records, so
- * they should read the same in any client and archive as plain text. Omitting `html` entirely is
- * what makes Cloudflare send a plain-text-only message.
+ * Everything here is `text/plain` on purpose. There is exactly one message — a sign-in code —
+ * and it should read the same in any client, in any inbox, with nothing to render. Omitting
+ * `html` entirely is what makes Cloudflare send a plain-text-only message.
  */
 
 import type { Env } from './env';
@@ -19,7 +18,7 @@ interface Message {
 	to: string;
 	subject: string;
 	text: string;
-	/** Set on the receipt so a reply reaches a human rather than the sending address. */
+	/** Set when a reply should reach a human rather than the sending address. */
 	replyTo?: string;
 }
 
@@ -110,35 +109,4 @@ export function signInEmail(code: string): { subject: string; text: string } {
 			``,
 		].join('\n'),
 	};
-}
-
-export function receiptEmail(details: {
-	messages: number;
-	amountCents: number;
-	invoiceNumber: string | null;
-	invoiceUrl: string | null;
-	balance: number;
-	/** ISO date, formatted by the caller so this stays a pure function of its input. */
-	date: string;
-}): { subject: string; text: string } {
-	const amount = `$${(details.amountCents / 100).toFixed(2)} USD`;
-
-	const lines = [
-		`Thank you. Your payment went through.`,
-		``,
-		`Date:        ${details.date}`,
-		`Description: ${details.messages} messages`,
-		`Amount:      ${amount}`,
-	];
-
-	if (details.invoiceNumber) lines.push(`Invoice:     ${details.invoiceNumber}`);
-	lines.push(``, `You now have ${details.balance} messages remaining.`);
-
-	if (details.invoiceUrl) {
-		lines.push(``, `The itemised invoice, with a PDF you can download, is here:`, details.invoiceUrl);
-	}
-
-	lines.push(``, `The Church of Jamie`, ``);
-
-	return { subject: `Receipt — ${details.messages} messages, ${amount}`, text: lines.join('\n') };
 }

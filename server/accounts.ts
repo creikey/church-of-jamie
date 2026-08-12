@@ -1,22 +1,25 @@
 /**
- * Accounts and sessions.
+ * Accounts, sessions, and the daily message allowance.
  *
- * An account is an email address and a number of messages remaining, nothing else. Proving you
- * own the address is the whole of authentication: a six-digit code is mailed to it, and getting
- * that code back creates the account if it does not exist yet.
+ * An account is an email address, nothing else. Proving you own the address is the whole of
+ * authentication: a six-digit code is mailed to it, and getting that code back creates the
+ * account if it does not exist yet.
+ *
+ * There is no balance on an account. Every address gets `DAILY_MESSAGES` messages a day, counted
+ * by the rate limiter rather than stored — see the allowance section at the bottom of this file.
  *
  * Sessions are opaque random tokens held in an HttpOnly cookie. Only their SHA-256 hashes reach
  * the database, so a leaked copy of the table cannot be used to log in as anyone.
  */
 
 import type { Env } from './env';
-import { FREE_MESSAGES } from './env';
+import { LIMITS } from './env';
 import { now, randomHex, sha256Hex, timingSafeEqual } from './http';
+import { consume, left, refund } from './ratelimit';
 
 export interface User {
 	id: string;
 	email: string;
-	messagesRemaining: number;
 }
 
 const COOKIE_NAME = 'coj_session';
@@ -96,20 +99,20 @@ export async function redeemLoginCode(env: Env, email: string, code: string): Pr
 // ---------------------------------------------------------------- accounts
 
 /**
- * Creates the account for an address with its free messages, or returns the one already there.
+ * Creates the account for an address, or returns the one already there.
  *
  * Kept separate from the lookup so a caller can decide whether it is willing to create an account
- * at all — creating one gives `FREE_MESSAGES` of model time away, and `verify.ts` rate-limits
- * that before it gets here.
+ * at all — every account is `DAILY_MESSAGES` of model time a day, and `verify.ts` rate-limits how
+ * many can be made from one connection before it gets here.
  */
 export async function createUser(env: Env, email: string): Promise<User> {
 	const id = crypto.randomUUID();
 	// A second sign-in racing the first would collide on the unique email; ignore and re-read.
 	await env.DB.prepare(
-		`INSERT INTO users (id, email, messages_remaining, created_at) VALUES (?, ?, ?, ?)
+		`INSERT INTO users (id, email, created_at) VALUES (?, ?, ?)
 		 ON CONFLICT(email) DO NOTHING`,
 	)
-		.bind(id, email, FREE_MESSAGES, now())
+		.bind(id, email, now())
 		.run();
 
 	const user = await findUserByEmail(env, email);
@@ -118,55 +121,48 @@ export async function createUser(env: Env, email: string): Promise<User> {
 }
 
 export async function findUserByEmail(env: Env, email: string): Promise<User | null> {
-	const row = await env.DB.prepare(
-		'SELECT id, email, messages_remaining FROM users WHERE email = ?',
-	)
+	const row = await env.DB.prepare('SELECT id, email FROM users WHERE email = ?')
 		.bind(email)
-		.first<{ id: string; email: string; messages_remaining: number }>();
-	return row ? { id: row.id, email: row.email, messagesRemaining: row.messages_remaining } : null;
-}
-
-/** Adds messages to an account. Returns false if the account is gone (deleted mid-checkout). */
-export async function grantMessages(env: Env, userId: string, count: number): Promise<boolean> {
-	const result = await env.DB.prepare(
-		'UPDATE users SET messages_remaining = messages_remaining + ? WHERE id = ?',
-	)
-		.bind(count, userId)
-		.run();
-	return (result.meta.changes ?? 0) > 0;
+		.first<{ id: string; email: string }>();
+	return row ? { id: row.id, email: row.email } : null;
 }
 
 /**
- * Takes one message off the balance, atomically. Returns false when there was none to take —
- * checking first and then decrementing would let two questions in flight share one message.
- */
-export async function spendMessage(env: Env, userId: string): Promise<boolean> {
-	const result = await env.DB.prepare(
-		'UPDATE users SET messages_remaining = messages_remaining - 1 WHERE id = ? AND messages_remaining > 0',
-	)
-		.bind(userId)
-		.run();
-	return (result.meta.changes ?? 0) > 0;
-}
-
-/** Puts a spent message back when the answer never happened. */
-export async function refundMessage(env: Env, userId: string): Promise<void> {
-	await env.DB.prepare('UPDATE users SET messages_remaining = messages_remaining + 1 WHERE id = ?')
-		.bind(userId)
-		.run();
-}
-
-/**
- * Erases the account. The payment ledger keeps its rows — they are the record behind an invoice —
- * but is unlinked from the person, so nothing identifying survives.
+ * Erases the account. Today's spent messages are not erased with it — that counter is keyed on
+ * the address and left alone on purpose, so deleting and signing up again is not a way to start
+ * the day over.
  */
 export async function deleteUser(env: Env, user: User): Promise<void> {
 	await env.DB.batch([
 		env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
 		env.DB.prepare('DELETE FROM login_codes WHERE email = ?').bind(user.email),
-		env.DB.prepare('UPDATE purchases SET user_id = NULL WHERE user_id = ?').bind(user.id),
 		env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
 	]);
+}
+
+// ---------------------------------------------------------------- daily allowance
+
+/** The scope every message is counted under. One bucket per address per day. */
+const ALLOWANCE = 'messages-email-d';
+
+/** How many messages the address has left today, without spending one. For display only. */
+export function messagesLeftToday(env: Env, email: string): Promise<number> {
+	return left(env, ALLOWANCE, email, LIMITS.messagesPerEmailDay);
+}
+
+export type Spend = { ok: true; remaining: number } | { ok: false; retryAfter: number };
+
+/**
+ * Spends one of today's messages, atomically. Two questions sent at once cannot share one:
+ * the counter is incremented and read in a single statement, so the second sees its own number.
+ */
+export function spendMessage(env: Env, email: string): Promise<Spend> {
+	return consume(env, ALLOWANCE, email, LIMITS.messagesPerEmailDay);
+}
+
+/** Puts a spent message back when the answer never happened. */
+export function refundMessage(env: Env, email: string): Promise<void> {
+	return refund(env, ALLOWANCE, email, LIMITS.messagesPerEmailDay);
 }
 
 // ---------------------------------------------------------------- sessions
@@ -187,12 +183,12 @@ export async function currentUser(env: Env, request: Request): Promise<User | nu
 
 	const hash = await sha256Hex(token);
 	const row = await env.DB.prepare(
-		`SELECT users.id, users.email, users.messages_remaining, sessions.expires_at
+		`SELECT users.id, users.email, sessions.expires_at
 		 FROM sessions JOIN users ON users.id = sessions.user_id
 		 WHERE sessions.token_hash = ?`,
 	)
 		.bind(hash)
-		.first<{ id: string; email: string; messages_remaining: number; expires_at: number }>();
+		.first<{ id: string; email: string; expires_at: number }>();
 
 	if (!row) return null;
 	if (row.expires_at < now()) {
@@ -200,7 +196,7 @@ export async function currentUser(env: Env, request: Request): Promise<User | nu
 		return null;
 	}
 
-	return { id: row.id, email: row.email, messagesRemaining: row.messages_remaining };
+	return { id: row.id, email: row.email };
 }
 
 export async function destroySession(env: Env, request: Request): Promise<void> {
@@ -213,8 +209,7 @@ export async function destroySession(env: Env, request: Request): Promise<void> 
 
 /**
  * `Secure` is set only on https, because local development is plain http on localhost and the
- * browser would silently drop the cookie. `SameSite=Lax` still lets the cookie ride along on the
- * top-level redirect back from Stripe.
+ * browser would silently drop the cookie.
  */
 export function sessionCookie(token: string, url: string): string {
 	const secure = new URL(url).protocol === 'https:' ? '; Secure' : '';
